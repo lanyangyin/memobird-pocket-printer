@@ -73,19 +73,30 @@ def cmd_selftest(args) -> int:
     w, h, raw = dither_to_raw(img, "floyd")
     print(f"  渲染: {w}x{h}px (期望宽度 {PRINTER_WIDTH})  raw={len(raw)}B 行字节={(w + 7) // 8}")
     ok &= w == PRINTER_WIDTH
-    bmp = raw_to_bmp(w, h, raw, top_down=True)
-    good = bmp[:2] == b"BM" and len(bmp) > 54 + len(raw) // 2
-    ok &= good
-    import struct
-    bi_height = struct.unpack("<i", bmp[22:26])[0] if len(bmp) > 26 else 0
-    print(f"  BMP: {len(bmp)}B magic={bmp[:2]!r} biHeight={bi_height} (负数=top-down，符合要求)")
-    ok &= bi_height == -h
 
-    job = packet.build_bitmap_job(raw)
+    import struct
+    # 官方格式：biHeight 为正，但行序 top-down（GT1 固件就吃这个）
+    bmp = raw_to_bmp(w, h, raw, official=True)
+    bi_height = struct.unpack("<i", bmp[22:26])[0] if len(bmp) > 26 else 0
+    good = bmp[:2] == b"BM" and bi_height == h
+    ok &= good
+    print(f"  BMP(official): {len(bmp)}B magic={bmp[:2]!r} biHeight={bi_height} (+{h} = 官方格式)")
+
+    # 规范格式（负高度）保留给局域网/云端等可能要求规范的场景
+    bmp2 = raw_to_bmp(w, h, raw, top_down=True, official=False)
+    bi2 = struct.unpack("<i", bmp2[22:26])[0] if len(bmp2) > 26 else 0
+    ok &= bi2 == -h
+    print(f"  BMP(规范):     {len(bmp2)}B biHeight={bi2} (-{h} = top-down 规范写法)")
+
+    job = packet.build_bmp_job(bmp)
     print(f"  蓝牙分帧: {job.chunks} 帧, 总长 {job.total_bytes}B, 首帧 {len(job.frames[0])}B")
     good = all(len(f) <= 1100 for f in job.frames)
     ok &= good
     print(f"  每帧 <=1100B: {good}")
+
+    tj = packet.job_for_text("字号档位测试", bold=True, underline=False, font_size=2)
+    print(f"  文本帧: {tj.chunks} 帧, 带 0x0D(加粗)/0x11(下划线)/0x10(字号档位)")
+    ok &= tj.chunks >= 1
 
     print("\n== 依赖 ==")
     for mod, hint in (("PIL", "pip install pillow"), ("requests", "pip install requests"),

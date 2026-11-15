@@ -62,12 +62,19 @@ def main() -> int:
          ).hex()},
     ]
 
-    # ---- 2) 文本任务（GBK 帧）----
-    for text in ["你好", "你好世界，这是一行普通的中文测试文本，一共二十多个字",
-                 "hello 123", "混合 mixed 内容 001"]:
-        job = packet.job_for_text(text, encoding="gbk")
+    # ---- 2) 文本任务（GBK 帧，含样式 tag）----
+    text_cases = [
+        ("你好", False, False, 0),
+        ("你好世界，这是一行普通的中文测试文本，一共二十多个字", True, False, 0),
+        ("hello 123", False, True, 1),
+        ("混合 mixed 内容 001", True, True, 2),
+        ("长文本分包测试" * 40, False, False, 0),      # 触发 300 字节分包
+    ]
+    for text, bold, ul, size in text_cases:
+        job = packet.job_for_text(text, encoding="gbk", bold=bold, underline=ul, font_size=size)
         fixtures["text_jobs"].append({
             "text": text,
+            "bold": bold, "underline": ul, "fontSize": size,
             "gbk_hex": (text + "\n").encode("gbk").hex(),
             "frames_hex": [f.hex() for f in job.frames],
             "meta": {"format": "gbk", "chunks": job.chunks, "bytes": job.total_bytes},
@@ -89,14 +96,16 @@ def main() -> int:
             "raw_hex": raw.hex(),
         })
 
-    # ---- 4) BMP ----
+    # ---- 4) BMP（official 与规范写法都要对得上）----
     img = checker(48, 24)
     w, h, raw = dither_to_raw(img, "threshold")
     for td in (True, False):
-        fixtures["bmp"].append({
-            "w": w, "h": h, "raw_hex": raw.hex(), "top_down": td,
-            "bmp_hex": raw_to_bmp(w, h, raw, top_down=td).hex(),
-        })
+        for official in (True, False):
+            fixtures["bmp"].append({
+                "w": w, "h": h, "raw_hex": raw.hex(),
+                "top_down": td, "official": official,
+                "bmp_hex": raw_to_bmp(w, h, raw, top_down=td, official=official).hex(),
+            })
 
     # ---- 5) GBK 编码 ----
     for text in ["你好", "咕咕机", "abc 你好 123", "，。！？：；（）《》"]:

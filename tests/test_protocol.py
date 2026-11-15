@@ -121,19 +121,35 @@ check("多段用 | 连接", calls["/home/printpaper"]["printcontent"] == "T:aGk=
 print("\n4) BMP 回读")
 img = prepare("咕咕机 BMP 校验 ABC 123")
 w, h, mono = dither_to_raw(img, "floyd")
-bmp = raw_to_bmp(w, h, mono, top_down=True)
+bmp = raw_to_bmp(w, h, mono, official=True)          # 官方格式：高度为正 + 行序 top-down
 back = Image.open(io.BytesIO(bmp)).convert("1")
 check("BMP 尺寸一致", back.size == (w, h), str(back.size))
-check("biHeight 为负（top-down）", struct.unpack("<i", bmp[22:26])[0] == -h)
-px = back.load()
+check("biHeight 为正（官方格式）", struct.unpack("<i", bmp[22:26])[0] == h)
+bmp_spec = raw_to_bmp(w, h, mono, top_down=True, official=False)
+check("规范写法 biHeight 为负", struct.unpack("<i", bmp_spec[22:26])[0] == -h)
+
+# 黄金标准：与 PIL 生成的 1-bit BMP **逐字节一致**（官方 SDK 走的就是这条编码路径）
+im = raw_to_image(w, h, mono).convert("1").transpose(Image.FLIP_TOP_BOTTOM)
+_gold = io.BytesIO()
+im.save(_gold, format="BMP")
+check("official BMP 与 PIL 逐字节一致", bmp[:] == _gold.getvalue())
+
+# 行序：数据第 1 行 = 位图第 1 行（取反，因为调色板 index1=白）
 rb = (w + 7) // 8
+body = bmp[62:]
+check("BMP 数据第 1 行 = 取反后的位图第 1 行", body[:rb] == bytes(b ^ 0xFF for b in mono[:rb]))
+check("BMP 数据最后 1 行 = 取反后的位图最后 1 行", body[-rb:] == bytes(b ^ 0xFF for b in mono[-rb:]))
+
+# 规范格式：标准解码器回读应与裸位图逐像素一致
+back_spec = Image.open(io.BytesIO(bmp_spec)).convert("1")
+px = back_spec.load()
 diff = sum(
     1
     for y in range(h)
     for x in range(w)
     if (1 if mono[y * rb + (x >> 3)] & (0x80 >> (x & 7)) else 0) != (0 if px[x, y] else 1)
 )
-check("逐像素一致", diff == 0, f"diff={diff}")
+check("规范格式逐像素一致", diff == 0, f"diff={diff}")
 check("宽度 = 384", w == 384, str(w))
 check("裸位图行字节 = 48", rb == 48, str(rb))
 check("raw_to_image 可还原", raw_to_image(w, h, mono).size == (w, h))

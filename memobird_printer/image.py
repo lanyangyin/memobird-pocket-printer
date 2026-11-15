@@ -180,23 +180,41 @@ def _raw_to_1bit(w: int, h: int, raw: bytes) -> Image.Image:
 # --------------------------------------------------------------------------- #
 # 输出格式
 # --------------------------------------------------------------------------- #
-def raw_to_bmp(w: int, h: int, raw: bytes, top_down: bool = True) -> bytes:
+def raw_to_bmp(w: int, h: int, raw: bytes, top_down: bool = True, official: bool = True) -> bytes:
     """
-    1bpp 裸位图 → BMP 字节流。
-    top_down=True 时 biHeight 为负（行序 top-down）—— 咕咕机云/局域网接口要求如此，
-    否则打出来上下颠倒。
+    1bpp 裸位图 → BMP 字节流。**official 模式下与 PIL 的 1-bit BMP 逐字节一致**
+    —— 官方 SDK 走的就是 PIL 那条编码路径，实机验证过的驱动都用它。
+
+    两个必须踩对的点：
+      1. **调色板顺序**：index0=黑、index1=白（PIL 就这样）。我们内部裸位图 bit=1 表示黑，
+         而 BMP 里 bit=1 指向 index1=白 —— 所以写行数据时要**逐字节取反**。
+         顺序/极性搞反 ⇒ 固件把整页当无效内容（实测：打出自带的 "nice to meet you" 示范页）。
+      2. **行序与 biHeight**：official 时 biHeight 取正、但数据按 top-down 行序写
+         （官方 `BMPFile.createBMPArray` 的非标准做法）；写负高度固件不认。
+
+    official=False 时按 BMP 规范写（top_down=True → 负高度；False → 正高度 + bottom-up）。
     """
     row_bytes = ((w + 31) // 32) * 4
     src_rb = (w + 7) // 8
     body = bytearray()
-    ys = range(h) if top_down else range(h - 1, -1, -1)
+
+    if official:
+        ys = range(h)
+        height_field = h
+    else:
+        ys = range(h) if top_down else range(h - 1, -1, -1)
+        height_field = -h if top_down else h
+
     for y in ys:
         row = bytearray(row_bytes)
-        row[:src_rb] = raw[y * src_rb:(y + 1) * src_rb]
+        src = raw[y * src_rb:(y + 1) * src_rb]
+        for i, b in enumerate(src):
+            row[i] = b ^ 0xFF               # bit=1(黑) → 0；取反后 bit=1 表示白(index1)
         body += row
 
-    dib = struct.pack("<IiiHHIIiiII", 40, w, -h if top_down else h, 1, 1, 0, len(body), 2835, 2835, 2, 0)
-    palette = struct.pack("<II", 0x00FFFFFF, 0x00000000)  # 0=白 1=黑
+    dib = struct.pack("<IiiHHIIiiII", 40, w, height_field, 1, 1, 0, len(body),
+                      3780, 3780, 2, 2)
+    palette = struct.pack("<II", 0x00000000, 0x00FFFFFF)   # 0=黑 1=白（与 PIL 一致）
     off = 14 + len(dib) + len(palette)
     fh = struct.pack("<2sIHHI", b"BM", off + len(body), 0, 0, off)
     return fh + dib + palette + bytes(body)
@@ -204,7 +222,7 @@ def raw_to_bmp(w: int, h: int, raw: bytes, top_down: bool = True) -> bytes:
 
 def image_to_bmp(img: Image.Image, mode: DitherMode = "floyd") -> bytes:
     w, h, raw = dither_to_raw(img, mode)
-    return raw_to_bmp(w, h, raw, top_down=True)
+    return raw_to_bmp(w, h, raw, official=True)
 
 
 def prepare(

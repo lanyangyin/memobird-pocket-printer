@@ -36,6 +36,13 @@
       <div class="row">
         <label>字号 <input id="font-size" type="range" min="14" max="48" value="26"><span id="font-size-val">26</span></label>
       </div>
+      <p class="hint">GBK 文本帧由打印机自己渲染，字号只有固件档位（≤26→普通 / ≤36→大 / 更大→最大）；
+        想要精确像素字号请把「传输」改成位图。</p>
+      <div class="row">
+        <label class="chk"><input id="bold" type="checkbox"> 加粗</label>
+        <label class="chk"><input id="underline" type="checkbox"> 下划线</label>
+        <label class="chk"><input id="feed" type="checkbox" checked> 打后走纸</label>
+      </div>
       <div class="row">
         <label>二值化
           <select id="mode-text">

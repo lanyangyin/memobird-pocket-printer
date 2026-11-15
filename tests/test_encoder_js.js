@@ -42,12 +42,12 @@ for (const c of fixtures.frames) {
 }
 
 /* ---------------------------------------------------------- 2. 文本任务 */
-console.log('\n2) 文本任务（GBK 编码 + 整帧）');
+console.log('\n2) 文本任务（GBK 编码 + 样式 tag + 整帧）');
 for (const c of fixtures.text_jobs) {
   const bytes = GBK.encode(c.text.endsWith('\n') ? c.text : c.text + '\n');
   check(`GBK 字节 ${JSON.stringify(c.text.slice(0, 10))}`, hex(bytes), c.gbk_hex);
-  const job = enc.buildTextJob(bytes);
-  check(`整帧 ${JSON.stringify(c.text.slice(0, 10))}`,
+  const job = enc.buildTextJob(bytes, { bold: c.bold, underline: c.underline, fontSize: c.fontSize });
+  check(`整帧 ${JSON.stringify(c.text.slice(0, 10))} (${job.frames.length} 帧)`,
     job.frames.map(hex).join('|'), c.frames_hex.join('|'));
   check(`meta.chunks/bytes`,
     `${job.meta.chunks}/${job.meta.bytes}`,
@@ -63,11 +63,12 @@ for (const c of fixtures.dither) {
 }
 
 /* ---------------------------------------------------------------- 4. BMP */
-console.log('\n4) BMP 封装');
+console.log('\n4) BMP 封装（official / 规范两种都要一致）');
 for (const c of fixtures.bmp) {
   const raw = Uint8Array.from(Buffer.from(c.raw_hex, 'hex'));
-  const bmp = enc.rawToBmp(c.w, c.h, raw, c.top_down);
-  check(`${c.w}x${c.h} topDown=${c.top_down} (${bmp.length}B)`, hex(bmp), c.bmp_hex);
+  const bmp = enc.rawToBmp(c.w, c.h, raw, c.top_down, c.official);
+  check(`${c.w}x${c.h} topDown=${c.top_down} official=${c.official} (${bmp.length}B)`,
+    hex(bmp), c.bmp_hex);
 }
 
 /* ---------------------------------------------------------------- 5. GBK */

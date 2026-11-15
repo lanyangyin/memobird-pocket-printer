@@ -110,11 +110,14 @@ def encode_calibration(req: dict) -> dict:
         job = packet.build_bitmap_job(raw)
         used, n = "raw", len(raw)
     else:
-        bmp = raw_to_bmp(w, h, raw, top_down=not req.get("vflip"))
+        bmp = raw_to_bmp(w, h, raw, official=True)
         job = packet.build_bmp_job(bmp)
         used, n = "bmp", len(bmp)
+    frames = [base64.b64encode(f).decode() for f in job.frames]
+    if req.get("feed", True):
+        frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
     return {
-        "frames": [base64.b64encode(f).decode() for f in job.frames],
+        "frames": frames,
         "meta": {"format": used, "chunks": job.chunks, "bytes": n,
                  "preheat": packet.PREHEAT, "width": w, "height": h},
     }
@@ -146,19 +149,43 @@ def _vflip(h: int, raw: bytes, row_bytes: int) -> bytes:
     return b"".join(reversed(rows))
 
 
+def _size_tier(font_size) -> int:
+    """把像素字号映射成固件字号档位（tag 0x10）：≤26→0 普通 / ≤36→1 大 / 更大→2。"""
+    try:
+        px = int(font_size or 26)
+    except (TypeError, ValueError):
+        px = 26
+    if px <= 26:
+        return 0
+    if px <= 36:
+        return 1
+    return 2
+
+
 def encode(req: dict) -> dict:
     kind = req.get("kind") or "text"
     fmt = (req.get("format") or "").lower()
+    tier = _size_tier(req.get("fontSize"))
 
     # ---- 文本：优先走 GBK 文本帧（体积最小、最快） ----
     if kind == "text" and fmt in ("", "gbk"):
         text = req.get("text") or ""
         try:
-            job = packet.job_for_text(text, encoding="gbk")
+            job = packet.job_for_text(
+                text, encoding="gbk",
+                bold=bool(req.get("bold")),
+                underline=bool(req.get("underline")),
+                font_size=tier,
+            )
+            frames = [base64.b64encode(f).decode() for f in job.frames]
+            if req.get("feed"):
+                frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
             return {
-                "frames": [base64.b64encode(f).decode() for f in job.frames],
+                "frames": frames,
                 "meta": {"format": "gbk", "chunks": job.chunks, "bytes": job.total_bytes,
-                         "preheat": packet.PREHEAT, "width": 384, "height": 0},
+                         "preheat": packet.PREHEAT, "width": 384, "height": 0,
+                         "sizeTier": tier, "bold": bool(req.get("bold")),
+                         "underline": bool(req.get("underline"))},
             }
         except UnicodeEncodeError:
             fmt = "bmp"        # 有 GBK 以外的字符 → 自动退回图片模式
@@ -174,15 +201,20 @@ def encode(req: dict) -> dict:
         payload_bytes = len(raw)
         used = "raw"
     else:
-        bmp = raw_to_bmp(w, h, raw, top_down=not req.get("vflip"))
+        # official=True：与官方 SDK 一致（biHeight 正 + 行序 top-down），GT1 只认这个
+        bmp = raw_to_bmp(w, h, raw, official=True)
         job = packet.build_bmp_job(bmp)
         payload_bytes = len(bmp)
         used = "bmp"
 
+    frames = [base64.b64encode(f).decode() for f in job.frames]
+    if req.get("feed"):
+        frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
+
     return {
-        "frames": [base64.b64encode(f).decode() for f in job.frames],
+        "frames": frames,
         "meta": {"format": used, "chunks": job.chunks, "bytes": payload_bytes,
-                 "preheat": packet.PREHEAT, "width": w, "height": h},
+                 "preheat": packet.PREHEAT, "width": w, "height": h, "sizeTier": tier},
     }
 
 

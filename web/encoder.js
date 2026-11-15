@@ -28,8 +28,12 @@
   const TAG_TOTAL_LEN = 0x0A;
   const TAG_PKG_COUNT = 0x0B;
   const TAG_PKG_NO = 0x0C;
+  const TAG_BOLD = 0x0D;
+  const TAG_FONT_SIZE = 0x10;
+  const TAG_UNDERLINE = 0x11;
 
   const MAX_CHUNK = 1024;
+  const TEXT_CHUNK = 300;
   const PREHEAT = 2048;
   const WIDTH = 384;
 
@@ -83,36 +87,53 @@
   }
 
   /* ------------------------------------------------------------------ 任务 */
-  function chunkedJob(data, tag, chunk) {
+  function chunkedJob(data, tag, chunk, includeTotalLen) {
     chunk = chunk || MAX_CHUNK;
     const pieces = [];
     for (let i = 0; i < data.length; i += chunk) pieces.push(data.subarray(i, Math.min(i + chunk, data.length)));
     if (pieces.length === 0) pieces.push(new Uint8Array(0));
     const count = pieces.length;
-    const frames = pieces.map((piece, idx) => buildFrame(
-      CMD_PRINT,
-      concat([
+    const frames = pieces.map((piece, idx) => {
+      const parts = [
         tlv(TAG_PKG_COUNT, u16(count)),
         tlv(TAG_PKG_NO, u16(idx + 1)),
-        tlv(TAG_TOTAL_LEN, u16(data.length & 0xffff)),
-        tlv(tag, piece),
-      ]),
-    ));
+      ];
+      if (includeTotalLen) parts.push(tlv(TAG_TOTAL_LEN, u16(data.length & 0xffff)));
+      parts.push(tlv(tag, piece));
+      return buildFrame(CMD_PRINT, concat(parts));
+    });
     return { frames, meta: { chunks: count, bytes: data.length } };
   }
 
-  /** 文本任务：text 必须是已经 GBK 编码好的字节（含结尾 \n） */
-  function buildTextJob(gbkBytes) {
-    const payload = concat([
-      tlv(TAG_PKG_COUNT, u16(1)),
-      tlv(TAG_PKG_NO, u16(1)),
-      tlv(TAG_TOTAL_LEN, u16(gbkBytes.length & 0xffff)),
-      tlv(TAG_TEXT, gbkBytes),
-    ]);
-    return {
-      frames: [buildFrame(CMD_PRINT, payload)],
-      meta: { chunks: 1, bytes: gbkBytes.length },
-    };
+  /**
+   * 文本任务（对齐官方 SDK）：
+   *   tag 0x0B 总包数 | 0x0C 包序号 | 0x0D 加粗 | 0x11 下划线 | 0x10 字号(档位) | 0x07 GBK 文本
+   * 每包文本不超过 300 字节，超过要分包。
+   */
+  function buildTextJob(gbkBytes, opts) {
+    opts = opts || {};
+    const chunk = opts.chunk || TEXT_CHUNK;
+    const bold = opts.bold ? 1 : 0;
+    const underline = opts.underline ? 1 : 0;
+    const fontSize = (opts.fontSize | 0) & 0xff;
+
+    const pieces = [];
+    for (let i = 0; i < gbkBytes.length; i += chunk) {
+      pieces.push(gbkBytes.subarray(i, Math.min(i + chunk, gbkBytes.length)));
+    }
+    if (!pieces.length) pieces.push(Uint8Array.from([0x0a]));
+    const count = pieces.length;
+
+    const frames = pieces.map((piece, i) => buildFrame(CMD_PRINT, concat([
+      tlv(TAG_PKG_COUNT, u16(count)),
+      tlv(TAG_PKG_NO, u16(i + 1)),
+      tlv(TAG_BOLD, Uint8Array.from([bold])),
+      tlv(TAG_UNDERLINE, Uint8Array.from([underline])),
+      tlv(TAG_FONT_SIZE, Uint8Array.from([fontSize])),
+      tlv(TAG_TEXT, piece),
+    ])));
+
+    return { frames, meta: { chunks: count, bytes: gbkBytes.length } };
   }
 
   function buildBitmapJob(raw, chunk) {
@@ -208,38 +229,51 @@
     return { w, h, raw: packThreshold(quant, w, h, threshold) };
   }
 
-  /** 1bpp 裸位图 → BMP（与 Python raw_to_bmp 字节一致） */
-  function rawToBmp(w, h, raw, topDown) {
-    topDown = topDown !== false;
+  /**
+   * 1bpp 裸位图 → BMP，**与 PIL 的 1-bit BMP 逐字节一致**（官方 SDK 的编码路径）
+   *
+   * 两个关键点：
+   *  1. 调色板 index0=黑、index1=白；我们内部 bit=1 是黑，所以行数据要**逐字节取反**；
+   *  2. official=true 时 biHeight 取正、行序 top-down（官方非标准做法）。
+   * 搞反 ⇒ 固件判无效（实测打出自带的 "nice to meet you" 示范页）。
+   */
+  function rawToBmp(w, h, raw, topDown, official) {
+    if (official === undefined) official = true;
+    if (!official && topDown === undefined) topDown = true;
+
     const rowBytes = ((w + 31) >> 5) << 2;
     const srcRb = (w + 7) >> 3;
     const bodyLen = rowBytes * h;
-    const palette = 8;                                  // 2 项 × 4 字节
+    const palette = 8;
     const off = 14 + 40 + palette;
     const out = new Uint8Array(off + bodyLen);
     const dv = new DataView(out.buffer);
 
-    out[0] = 0x42; out[1] = 0x4d;                       // 'BM'
+    let heightField;
+    if (official) heightField = h;                                   // 正数 + top-down 行序
+    else heightField = topDown === false ? h : -h;
+
+    out[0] = 0x42; out[1] = 0x4d;
     dv.setUint32(2, off + bodyLen, true);
     dv.setUint32(10, off, true);
-    dv.setUint32(14, 40, true);                         // biSize
+    dv.setUint32(14, 40, true);
     dv.setInt32(18, w, true);
-    dv.setInt32(22, topDown ? -h : h, true);
-    dv.setUint16(26, 1, true);                          // biPlanes
-    dv.setUint16(28, 1, true);                          // biBitCount
+    dv.setInt32(22, heightField, true);
+    dv.setUint16(26, 1, true);
+    dv.setUint16(28, 1, true);
     dv.setUint32(34, bodyLen, true);
-    dv.setInt32(38, 2835, true);
-    dv.setInt32(42, 2835, true);
-    dv.setUint32(46, 2, true);                          // biClrUsed
-    dv.setUint32(50, 0, true);
-    // 调色板：0=白 1=黑
-    dv.setUint32(54, 0x00ffffff, true);
-    dv.setUint32(58, 0x00000000, true);
+    dv.setInt32(38, 3780, true);
+    dv.setInt32(42, 3780, true);
+    dv.setUint32(46, 2, true);
+    dv.setUint32(50, 2, true);
+    dv.setUint32(54, 0x00000000, true);   // index0 = 黑
+    dv.setUint32(58, 0x00ffffff, true);   // index1 = 白
 
     for (let row = 0; row < h; row++) {
-      const y = topDown ? row : h - 1 - row;
-      const dst = off + row * rowBytes;
-      out.set(raw.subarray(y * srcRb, y * srcRb + srcRb), dst);
+      const y = (official || topDown !== false) ? row : h - 1 - row;
+      const srcOff = y * srcRb;
+      const dstOff = off + row * rowBytes;
+      for (let i = 0; i < srcRb; i++) out[dstOff + i] = raw[srcOff + i] ^ 0xff;
     }
     return out;
   }
@@ -249,16 +283,32 @@
     throw new Error('utf8ToGray 需要 DOM：请在页面里用 MBRender.textToGray');
   }
 
+  function flipRows(raw, w, h) {
+    const rb = (w + 7) >> 3;
+    const out = new Uint8Array(raw.length);
+    for (let y = 0; y < h; y++) {
+      out.set(raw.subarray((h - 1 - y) * rb, (h - y) * rb), y * rb);
+    }
+    return out;
+  }
+
   /**
-   * 组装一个可直接发送的任务
-   * @param {Uint8Array} raw  1bpp 裸位图
+   * 组装一个可直接发送的位图任务
+   * @param {Uint8Array} raw 1bpp 裸位图
    * @param {'bmp'|'raw'} format
+   * @param {{topDown?:boolean, official?:boolean}} opts
    */
-  function jobFromRaw(raw, w, h, format, topDown) {
+  function jobFromRaw(raw, w, h, format, opts) {
+    opts = opts || {};
+    const official = opts.official !== false;
+    const topDown = opts.topDown !== false;
     format = format === 'raw' ? 'raw' : 'bmp';
+
+    const body = topDown ? raw : flipRows(raw, w, h);
     let data;
-    if (format === 'raw') data = raw;
-    else data = rawToBmp(w, h, raw, topDown !== false);
+    if (format === 'raw') data = body;
+    else data = rawToBmp(w, h, body, true, official);
+
     const job = buildBmpJob(data);
     return {
       frames: job.frames,
@@ -267,28 +317,36 @@
   }
 
   /** 文本：优先 GBK 帧；编不了就返回 null 让调用方退回位图 */
-  function jobFromText(text, gbkEncode) {
+  function jobFromText(text, gbkEncode, opts) {
+    opts = opts || {};
     const payloadText = text.endsWith('\n') ? text : text + '\n';
     const bytes = gbkEncode(payloadText);
     if (bytes == null) return null;
-    const job = buildTextJob(bytes);
+    const job = buildTextJob(bytes, opts);
     return {
       frames: job.frames,
       meta: Object.assign({ format: 'gbk', preheat: PREHEAT, width: WIDTH, height: 0 }, job.meta),
     };
   }
 
+  /** 走纸：一段纯换行（官方 SDK 打图后会补一帧） */
+  function feedJob(lines) {
+    const text = '\n'.repeat(Math.max(1, lines || 3));
+    return buildTextJob(Uint8Array.from(text.split('').map((c) => c.charCodeAt(0))));
+  }
+
   return {
     // 常量
-    HEADER, MAGIC_SUM, PREHEAT, MAX_CHUNK, WIDTH,
+    HEADER, MAGIC_SUM, PREHEAT, MAX_CHUNK, TEXT_CHUNK, WIDTH,
     CMD_STATUS, CMD_CONTROL, CMD_PRINT,
     TAG_TEXT, TAG_BITMAP, TAG_TOTAL_LEN, TAG_PKG_COUNT, TAG_PKG_NO,
+    TAG_BOLD, TAG_FONT_SIZE, TAG_UNDERLINE,
     // 帧
     checksum, buildFrame, tlv, concat, u16,
     preheatBytes, statusFrame,
-    buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob,
+    buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
-    ditherToRaw, rawToBmp, packThreshold,
+    ditherToRaw, rawToBmp, packThreshold, flipRows,
     jobFromRaw, jobFromText, utf8ToGray,
   };
 });

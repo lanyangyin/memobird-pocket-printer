@@ -15,7 +15,7 @@ const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
 /** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 const state = {
   backend: 'unknown',      // 'server' | 'client'
@@ -132,12 +132,19 @@ async function encodeClient(req) {
   const mode = req.mode || 'threshold';
   const format = req.format === 'raw' ? 'raw' : 'bmp';
 
-  // 文字 + GBK 帧：最快路径
+  // 文字 + GBK 帧：最快路径（字号走固件档位 tag 0x10）
   if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk') {
     const gbk = await ensureGbk();
     if (gbk) {
-      const job = E.jobFromText(req.text || '', gbk.encode);
-      if (job) return { ...job, source: 'client' };
+      const job = E.jobFromText(req.text || '', gbk.encode, {
+        bold: req.bold,
+        underline: req.underline,
+        fontSize: sizeTier(req.fontSize),
+      });
+      if (job) {
+        if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
+        return { ...job, source: 'client' };
+      }
       log('文本含 GBK 无法表示的字符 → 自动转位图', 'warn');
     }
   }
@@ -159,7 +166,8 @@ async function encodeClient(req) {
   }
 
   const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, 128);
-  const job = E.jobFromRaw(d.raw, d.w, d.h, format, !req.vflip);
+  const job = E.jobFromRaw(d.raw, d.w, d.h, format, { official: true, topDown: !req.vflip });
+  if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
   return { ...job, source: 'client', raw: d.raw };
 }
 
@@ -323,13 +331,24 @@ async function sendJob(job, label) {
 }
 
 /* -------------------------------------------------------------- 请求构造 */
+/** 像素字号 → 固件字号档位（tag 0x10）：≤26→0 普通 / ≤36→1 大 / 更大→2 */
+function sizeTier(px) {
+  const v = parseInt(px, 10) || 26;
+  if (v <= 26) return 0;
+  if (v <= 36) return 1;
+  return 2;
+}
+
 const textReq = () => ({
   kind: 'text',
   text: $('#text').value,
   fontSize: parseInt($('#font-size').value, 10),
+  bold: !!($('#bold') && $('#bold').checked),
+  underline: !!($('#underline') && $('#underline').checked),
   mode: $('#mode-text').value,
   invert: $('#invert-text').checked,
   format: $('#fmt-text').value,
+  feed: !!($('#feed') && $('#feed').checked),
 });
 
 const imageReq = () => ({
@@ -339,6 +358,7 @@ const imageReq = () => ({
   invert: $('#invert-image').checked,
   format: $('#fmt-image').value,
   vflip: $('#vflip').checked,
+  feed: !!($('#feed') && $('#feed').checked),
 });
 
 async function runPreview(req) {
@@ -400,14 +420,18 @@ $('#btn-calib').addEventListener('click', async () => {
     if (!state.writeChr) { log('先点「连接打印机」', 'warn'); return; }
     let job;
     if (state.backend === 'server') {
-      job = await api('/api/calibration', { format: 'bmp', vflip: $('#vflip').checked });
+      job = await api('/api/calibration', { format: 'bmp', vflip: $('#vflip').checked, feed: true });
       job = { frames: job.frames.map(b64ToBytes), meta: job.meta, source: 'server' };
     } else {
       const E = window.MBEncoder;
       const R = window.MBRender;
       const g = R.calibrationGray();
       const d = E.ditherToRaw(g.gray, g.w, g.h, 'threshold', 128);
-      job = { ...E.jobFromRaw(d.raw, d.w, d.h, 'bmp', !$('#vflip').checked), source: 'client', raw: d.raw };
+      job = {
+        ...E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true, topDown: !$('#vflip').checked }),
+        source: 'client', raw: d.raw,
+      };
+      job.frames = job.frames.concat(E.feedJob(3).frames);
       $('#preview').src = R.rawToDataURL(d.w, d.h, d.raw, 2);
     }
     $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;

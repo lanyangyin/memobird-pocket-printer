@@ -40,10 +40,10 @@ apt update && apt install -y python3 python3-pil
 ### 把项目放进手机（三选一）
 
 ```bash
-# A. 手机能上网且你有仓库：直接 scp/git 拉
+# A. 手机能上网且你有仓库：直接 git clone 你自己的仓库
 # B. 电脑起个临时服务，手机上用浏览器下载 zip（最简单）
-#    电脑: python -m http.server 9000
-#    手机: 浏览器打开 http://<电脑IP>:9000/ 下载后解压到 ~/apk-re-yddyj
+#    电脑: python tools/make_phone_zip.py && python -m http.server 9000
+#    手机: 浏览器打开 http://<电脑IP>:9000/ 下载 memobird_phone.zip 后解压
 # C. adb push（开着 USB 调试）
 #    adb push <项目目录> /sdcard/
 #    然后 cp -r /sdcard/<项目目录名> ~
@@ -52,7 +52,7 @@ apt update && apt install -y python3 python3-pil
 ## 4. 启动
 
 ```bash
-cd ~/apk-re-yddyj
+cd ~/memobird-pocket-printer
 python3 phone/serve.py            # 或 bash phone/run.sh
 ```
 

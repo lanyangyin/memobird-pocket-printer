@@ -125,7 +125,7 @@ python -m memobird_printer preview "本地先看效果" -o p.png --mode atkinson
 # Termux
 pkg install -y proot-distro && proot-distro install ubuntu && proot-distro login ubuntu
 apt update && apt install -y python3 python3-pil
-cd ~/memobird_printer && python3 phone/serve.py     # 或 bash phone/run.sh
+cd ~/memobird-pocket-printer && python3 phone/serve.py     # 或 bash phone/run.sh
 ```
 
 > 想少传点文件：电脑上跑 `python tools/make_phone_zip.py`，会打出 `memobird_phone.zip`（约 45 KB），

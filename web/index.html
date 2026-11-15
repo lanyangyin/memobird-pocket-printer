@@ -36,8 +36,8 @@
       <div class="row">
         <label>字号 <input id="font-size" type="range" min="14" max="48" value="26"><span id="font-size-val">26</span></label>
       </div>
-      <p class="hint">GBK 文本帧由打印机自己渲染，字号只有固件档位（≤26→普通 / ≤36→大 / 更大→最大）；
-        想要精确像素字号请把「传输」改成位图。</p>
+      <p class="hint">GBK 文本帧由打印机自己渲染，字号只是固件档位（≤26→普通 / ≤36→大 / 更大→最大）。
+        <b>GT1 实测该档位可能被忽略</b> —— 需要字号真的变化，请把「传输」改成“转位图”。</p>
       <div class="row">
         <label>浓度
           <select id="darken-text">
@@ -67,9 +67,9 @@
       <div class="row">
         <label>传输
           <select id="fmt-text">
-            <option value="gbk">GBK 文本帧（最快）</option>
-            <option value="bmp">转位图 BMP</option>
-            <option value="raw">转裸位图</option>
+            <option value="gbk">GBK 文本帧（最快，字号只有固件档位）</option>
+            <option value="bmp">转位图（可精确字号/加粗/浓度）</option>
+            <option value="raw">裸位图帧（仅调试，GT1 不支持）</option>
           </select>
         </label>
       </div>
@@ -96,8 +96,8 @@
       <div class="row">
         <label>传输
           <select id="fmt-image">
-            <option value="bmp">BMP 文件帧</option>
-            <option value="raw">裸位图帧</option>
+            <option value="bmp">BMP 文件帧（推荐，唯一可靠）</option>
+            <option value="raw">裸位图帧（仅调试，GT1 不支持）</option>
           </select>
         </label>
         <label class="chk"><input id="vflip" type="checkbox"> 垂直翻转</label>
@@ -139,6 +139,7 @@
       </div>
       <div class="actions">
         <button id="btn-calib" class="primary">打印校准图</button>
+        <button id="btn-sizeprobe" class="ghost">字号档位测试</button>
         <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
       </div>

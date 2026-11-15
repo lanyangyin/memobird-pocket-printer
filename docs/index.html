@@ -183,8 +183,8 @@ footer {
       <div class="row">
         <label>字号 <input id="font-size" type="range" min="14" max="48" value="26"><span id="font-size-val">26</span></label>
       </div>
-      <p class="hint">GBK 文本帧由打印机自己渲染，字号只有固件档位（≤26→普通 / ≤36→大 / 更大→最大）；
-        想要精确像素字号请把「传输」改成位图。</p>
+      <p class="hint">GBK 文本帧由打印机自己渲染，字号只是固件档位（≤26→普通 / ≤36→大 / 更大→最大）。
+        <b>GT1 实测该档位可能被忽略</b> —— 需要字号真的变化，请把「传输」改成“转位图”。</p>
       <div class="row">
         <label>浓度
           <select id="darken-text">
@@ -214,9 +214,9 @@ footer {
       <div class="row">
         <label>传输
           <select id="fmt-text">
-            <option value="gbk">GBK 文本帧（最快）</option>
-            <option value="bmp">转位图 BMP</option>
-            <option value="raw">转裸位图</option>
+            <option value="gbk">GBK 文本帧（最快，字号只有固件档位）</option>
+            <option value="bmp">转位图（可精确字号/加粗/浓度）</option>
+            <option value="raw">裸位图帧（仅调试，GT1 不支持）</option>
           </select>
         </label>
       </div>
@@ -243,8 +243,8 @@ footer {
       <div class="row">
         <label>传输
           <select id="fmt-image">
-            <option value="bmp">BMP 文件帧</option>
-            <option value="raw">裸位图帧</option>
+            <option value="bmp">BMP 文件帧（推荐，唯一可靠）</option>
+            <option value="raw">裸位图帧（仅调试，GT1 不支持）</option>
           </select>
         </label>
         <label class="chk"><input id="vflip" type="checkbox"> 垂直翻转</label>
@@ -286,6 +286,7 @@ footer {
       </div>
       <div class="actions">
         <button id="btn-calib" class="primary">打印校准图</button>
+        <button id="btn-sizeprobe" class="ghost">字号档位测试</button>
         <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
       </div>
@@ -1112,7 +1113,7 @@ const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
 /** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 const state = {
   backend: 'unknown',      // 'server' | 'client'
@@ -1544,8 +1545,39 @@ $('#btn-calib').addEventListener('click', async () => {
     }
     $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;
     await sendJob(job, '校准图');
-    log('若上下颠倒 → 勾「垂直翻转」；全白 → 换「裸位图帧」；断行 → 分片改 20B', 'warn');
+    log('若上下颠倒 → 勾「垂直翻转」；全白 → 先查电量/纸面，再试浓度 2；断行 → 分片改 20B', 'warn');
   } catch (e) { log('校准图失败：' + (e.message || e), 'err'); }
+});
+
+$('#btn-sizeprobe').addEventListener('click', async () => {
+  try {
+    if (!state.writeChr) { log('先点「连接打印机」', 'warn'); return; }
+    let frames;
+    if (state.backend === 'server') {
+      const j = await api('/api/size-probe', {});
+      frames = j.frames.map(b64ToBytes);
+    } else {
+      const E = window.MBEncoder;
+      const R = window.MBRender;
+      const gbk = await ensureGbk();
+      frames = [];
+      if (gbk) {
+        for (let tier = 0; tier < 4; tier++) {
+          const job = E.jobFromText(`档位 tier=${tier}\n`, gbk.encode, { fontSize: tier });
+          frames = frames.concat(job.frames);
+        }
+      } else {
+        log('GBK 码表没加载，无法做档位测试', 'err');
+        return;
+      }
+      const g = R.textToGray('位图 40px 对照', { fontSize: 40 });
+      const d = E.ditherToRaw(g.gray, g.w, g.h, 'threshold', null, 0);
+      frames = frames.concat(E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true }).frames);
+      frames = frames.concat(E.feedJob(3).frames);
+    }
+    await sendJob({ frames, meta: { format: 'probe', bytes: frames.reduce((a, f) => a + f.length, 0), chunks: frames.length, preheat: 2048 }, source: state.backend }, '字号档位测试');
+    log('看纸面：四行「档位 tier=N」如果一样大 → 固件忽略 tag 0x10；若变大 → 档位有效', 'warn');
+  } catch (e) { log('档位测试失败：' + (e.message || e), 'err'); }
 });
 
 $('#btn-gatt').addEventListener('click', async () => {

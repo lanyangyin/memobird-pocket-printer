@@ -97,6 +97,33 @@ def calibration_image():
     return img
 
 
+def encode_size_probe(req: dict) -> dict:
+    """
+    字号档位测试：同一句话用 tag 0x10 = 0/1/2/3 各打一行，最后附一行位图 40px 作对照。
+    用来确认「GT1 到底认不认固件字号档位」——一次打印就能看出来。
+    """
+    from memobird_printer.image import dither_to_raw, raw_to_bmp
+
+    frames: list[str] = []
+    for tier in range(4):
+        job = packet.job_for_text(f"档位 tier={tier}\n", encoding="gbk", font_size=tier)
+        frames += [base64.b64encode(f).decode() for f in job.frames]
+
+    # 对照：位图 40px（这条路一定能变字号）
+    img = prepare("位图 40px 对照", font_size=40)
+    w, h, raw = dither_to_raw(img, "threshold")
+    bmp = raw_to_bmp(w, h, raw, official=True)
+    bmp_job = packet.build_bmp_job(bmp)
+    frames += [base64.b64encode(f).decode() for f in bmp_job.frames]
+    frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
+
+    return {
+        "frames": frames,
+        "meta": {"format": "probe", "chunks": len(frames), "bytes": len(bmp),
+                 "preheat": packet.PREHEAT, "width": 384, "height": h},
+    }
+
+
 def encode_calibration(req: dict) -> dict:
     from memobird_printer.image import dither_to_raw, raw_to_bmp
 
@@ -284,6 +311,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/calibration":
                 self._json(200, encode_calibration(body))
+                return
+            if path == "/api/size-probe":
+                self._json(200, encode_size_probe(body))
                 return
             self._json(404, {"error": "no such api"})
         except Exception as exc:                                    # noqa: BLE001

@@ -966,6 +966,9 @@ const { SVC_FF00, CHR_WRITE, CHR_NOTIFY } = BLE;
 const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
+/** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
+const APP_VERSION = '1.2.0';
+
 const state = {
   backend: 'unknown',      // 'server' | 'client'
   device: null,
@@ -1402,13 +1405,16 @@ $('#btn-copy').addEventListener('click', async () => {
   }
 
   const health = await detectBackend();
+  const healthEl = $('#health');
+  if (healthEl) healthEl.textContent = `页面 v${APP_VERSION}`;
+
   if (state.backend === 'server') {
     setMode(`编码：Python 服务端 v${health.version}`, 'ok');
     log(`服务端就绪（v${health.version}，PIL ${health.pil ? 'ok' : '缺失'}）`, 'ok');
     if (!health.pil) log('服务端缺 Pillow：apt install python3-pil', 'err');
   } else {
     setMode('编码：浏览器本地（纯静态）', 'ok');
-    log('没有检测到 Python 服务端 → 切到浏览器本地编码（纯静态模式）', 'warn');
+    log(`没有检测到 Python 服务端 → 切到浏览器本地编码（纯静态模式，页面 v${APP_VERSION}）`, 'warn');
     if (!window.MBEncoder || !window.MBRender) {
       log('本地编码器缺失：encoder.js / render.js 没加载', 'err');
     }

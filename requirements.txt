@@ -1,0 +1,6 @@
+pillow>=10.0
+requests>=2.31
+bleak>=0.22
+pyserial>=3.5
+# 可选：抓 App 私有接口
+# mitmproxy>=10.0

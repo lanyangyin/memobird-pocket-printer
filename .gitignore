@@ -1,0 +1,27 @@
+# ---- 逆向用的本地样本与中间产物（不发布） ----
+*.apk
+extract/
+jadx-out/
+tools/jadx/
+tools/jadx.zip
+tools/scan_urls.json
+capture.jsonl
+memobird_phone.zip
+
+# ---- 从 App 素材派生的演示图（版权原因不发布） ----
+demo_*.png
+demo_*.bmp
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

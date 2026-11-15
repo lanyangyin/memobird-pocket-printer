@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>咕咕机 / 有道口袋打印机 · 手机控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">MB</span>
+    <div>
+      <h1>口袋打印机控制台</h1>
+      <p class="sub">Web Bluetooth · Python 编码引擎</p>
+    </div>
+  </div>
+  <button id="btn-connect" class="primary">连接打印机</button>
+</header>
+
+<div id="conn" class="conn">未连接</div>
+
+<main>
+  <section class="card">
+    <div class="tabs">
+      <button class="tab active" data-tab="text">文字</button>
+      <button class="tab" data-tab="image">图片</button>
+      <button class="tab" data-tab="debug">调试</button>
+    </div>
+
+    <!-- 文字 -->
+    <div class="pane active" id="pane-text">
+      <textarea id="text" rows="6" placeholder="输入要打印的文字（支持中文/emoji 外的任意字符）">咕咕机测试
+第二行 hello 123</textarea>
+      <div class="row">
+        <label>字号 <input id="font-size" type="range" min="14" max="48" value="26"><span id="font-size-val">26</span></label>
+      </div>
+      <div class="row">
+        <label>二值化
+          <select id="mode-text">
+            <option value="threshold">阈值（文字最清晰）</option>
+            <option value="floyd">Floyd 抖动</option>
+            <option value="atkinson">Atkinson</option>
+            <option value="bayer">Bayer 网点</option>
+          </select>
+        </label>
+        <label class="chk"><input id="invert-text" type="checkbox"> 反色</label>
+      </div>
+      <div class="row">
+        <label>传输
+          <select id="fmt-text">
+            <option value="gbk">GBK 文本帧（最快）</option>
+            <option value="bmp">转位图 BMP</option>
+            <option value="raw">转裸位图</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="btn-preview-text" class="ghost">预览</button>
+        <button id="btn-print-text" class="primary">打印</button>
+      </div>
+    </div>
+
+    <!-- 图片 -->
+    <div class="pane" id="pane-image">
+      <input id="file" type="file" accept="image/*">
+      <div class="row">
+        <label>二值化
+          <select id="mode-image">
+            <option value="floyd">Floyd 抖动（照片）</option>
+            <option value="atkinson">Atkinson（对比高）</option>
+            <option value="bayer">Bayer 网点</option>
+            <option value="threshold">阈值（线稿）</option>
+          </select>
+        </label>
+        <label class="chk"><input id="invert-image" type="checkbox"> 反色</label>
+      </div>
+      <div class="row">
+        <label>传输
+          <select id="fmt-image">
+            <option value="bmp">BMP 文件帧</option>
+            <option value="raw">裸位图帧</option>
+          </select>
+        </label>
+        <label class="chk"><input id="vflip" type="checkbox"> 垂直翻转</label>
+      </div>
+      <div class="actions">
+        <button id="btn-preview-image" class="ghost">预览</button>
+        <button id="btn-print-image" class="primary">打印</button>
+      </div>
+    </div>
+
+    <!-- 调试 -->
+    <div class="pane" id="pane-debug">
+      <p class="hint">打印对不上/不清晰时，先打一张校准图，把结果告诉我就能定死格式。</p>
+      <div class="row">
+        <label>写入分片
+          <select id="chunk">
+            <option value="20">20 B（最稳）</option>
+            <option value="64">64 B</option>
+            <option value="128">128 B</option>
+            <option value="182">182 B</option>
+          </select>
+        </label>
+        <label class="chk"><input id="preheat" type="checkbox" checked> 预热包</label>
+      </div>
+      <div class="row">
+        <label>写入特征值
+          <input id="write-uuid" placeholder="自动（ff02 / ISSC 透传）">
+        </label>
+      </div>
+      <div class="actions">
+        <button id="btn-calib" class="primary">打印校准图</button>
+        <button id="btn-gatt" class="ghost">探测 GATT</button>
+        <button id="btn-status" class="ghost">查询状态</button>
+      </div>
+      <pre id="gatt-out" class="log small"></pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="preview-head"><h2>预览</h2><span id="meta" class="meta"></span></div>
+    <div class="preview-wrap"><img id="preview" alt="预览"></div>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="actions">
+      <button id="btn-clear" class="ghost">清空日志</button>
+      <button id="btn-copy" class="ghost">复制日志</button>
+    </div>
+    <pre id="log" class="log"></pre>
+  </section>
+</main>
+
+<footer>
+  <span>384 dots / 57mm · AA LEN CMD TLV SUM</span>
+  <span id="health"></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

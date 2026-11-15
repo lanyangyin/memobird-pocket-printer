@@ -1,0 +1,8 @@
+# 统一行尾：生成物（夹具/码表/静态页）在 CI 里会被重新生成并 git diff 比对，
+# 行尾只要有一点差异就会红，所以这里全部锁定 LF。
+* text=auto eol=lf
+
+*.png binary
+*.bmp binary
+*.apk binary
+*.zip binary

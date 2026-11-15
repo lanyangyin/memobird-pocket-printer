@@ -103,8 +103,11 @@ def main() -> int:
         fixtures["gbk"].append({"text": text, "hex": text.encode("gbk").hex()})
 
     out = os.path.join(ROOT, "tests", "fixtures.json")
-    with open(out, "w", encoding="utf-8") as f:
+    # newline="\n" 必须显式指定：Windows 上默认会把 \n 翻成 \r\n，
+    # 导致 CI（Linux）重新生成后 git diff 不一致。
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
         json.dump(fixtures, f, ensure_ascii=False, indent=1)
+        f.write("\n")
     print(f"fixtures: {out}")
     for k, v in fixtures.items():
         print(f"  {k}: {len(v)} 条")

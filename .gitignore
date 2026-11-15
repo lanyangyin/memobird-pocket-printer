@@ -28,3 +28,7 @@ desktop.ini
 
 # ---- 本地工具（便携版 gh，不发布）----
 tools/gh/
+
+# ---- 运行态 ----
+server.log
+server.pid

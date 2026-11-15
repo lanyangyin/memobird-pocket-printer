@@ -140,7 +140,8 @@ cd ~/memobird-pocket-printer && python3 phone/serve.py     # 或 bash phone/run.
 * 为什么必须 BLE：有道打印机有 iOS 版，而 iOS 不开放经典蓝牙 SPP → 硬件必然支持 BLE
 * 必须用 `127.0.0.1`/`localhost` 打开（Web Bluetooth 要求安全上下文）
 
-完整步骤与故障排查表见 [`docs/手机端WebBluetooth.md`](docs/手机端WebBluetooth.md)。
+完整步骤见 **[`docs/部署文档.md`](docs/部署文档.md)**（部署/自检/后台常驻/校准/排错全套），
+设计取舍与原理见 [`docs/手机端WebBluetooth.md`](docs/手机端WebBluetooth.md)。
 
 ## 抓 App 自己的私有接口（可选）
 

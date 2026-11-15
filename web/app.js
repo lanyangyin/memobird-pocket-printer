@@ -15,7 +15,7 @@ const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
 /** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 const state = {
   backend: 'unknown',      // 'server' | 'client'
@@ -137,8 +137,14 @@ async function encodeClient(req) {
   const darken = Math.max(0, Math.min(3, parseInt(req.darken, 10) || 0));
 
   // 文字 + GBK 帧：最快路径（字号走固件档位 tag 0x10）
-  // 但浓度（阈值/膨化）改不了固件渲染的文本，所以选了浓度就自动走位图
-  if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk' && darken === 0) {
+  // 但浓度改不了固件渲染的文本、字号档位 GT1 又不认 —— 动了任一项就自动走位图
+  const wantTier = sizeTier(req.fontSize);
+  const useGbk = req.kind !== 'image' && (req.format || 'gbk') === 'gbk';
+  if (useGbk && (darken > 0 || wantTier > 0)) {
+    log(`已自动改走位图：${darken > 0 ? '浓度' : '字号'}只能在位图模式下生效`, 'warn');
+  }
+
+  if (useGbk && darken === 0 && wantTier === 0) {
     const gbk = await ensureGbk();
     if (gbk) {
       const job = E.jobFromText(req.text || '', gbk.encode, {
@@ -168,10 +174,6 @@ async function encodeClient(req) {
   let gray = grayed.gray;
   if (req.invert) {
     for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
-  }
-
-  if (darken > 0 && (req.format || 'gbk') === 'gbk') {
-    log(`浓度档位 ${darken} 需要位图编码（GBK 文本由固件渲染，改不了深浅）`, 'warn');
   }
 
   const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);

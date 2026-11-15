@@ -196,8 +196,9 @@ def encode(req: dict) -> dict:
     tier = _size_tier(req.get("fontSize"))
     darken = int(req.get("darken") or 0)
 
-    # GBK 文本帧由固件自己渲染，浓度（阈值/膨化）改不了它 → 要加深就自动转位图
-    if kind == "text" and fmt in ("", "gbk") and darken > 0:
+    # GBK 文本帧由固件自己渲染：浓度改不了它，字号档位 GT1 也不认。
+    # 所以只要用户动了字号或浓度，就自动走位图（这条路一定能生效）。
+    if kind == "text" and fmt in ("", "gbk") and (darken > 0 or tier > 0):
         fmt = "bmp"
 
     # ---- 文本：优先走 GBK 文本帧（体积最小、最快） ----

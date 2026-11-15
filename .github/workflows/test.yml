@@ -18,15 +18,45 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install pillow requests
+          pip install pillow requests websocket-client
+
       - name: 库自检（帧/BMP/依赖）
         run: python -m memobird_printer selftest
-      - name: 离线协议断言
+
+      - name: 离线协议断言（Python）
         run: python tests/test_protocol.py
-      - name: 编码引擎 API 冒烟测试
+
+      - name: 重新生成夹具与 GBK 码表（并检查是否与仓库一致）
+        run: |
+          python tools/gen_fixtures.py
+          python tools/gen_gbk_table.py
+          git diff --exit-code -- tests/fixtures.json web/gbk.js || {
+            echo "::error::夹具/码表与仓库不一致，请在本地重新生成后提交";
+            exit 1;
+          }
+
+      - name: JS 编码器与 Python 逐字节一致（Node）
+        run: |
+          node --version
+          node tests/test_encoder_js.js
+
+      - name: 构建纯静态页并检查
+        run: |
+          python tools/build_static.py
+          test -s docs/index.html
+          git diff --exit-code -- docs/index.html || {
+            echo "::error::docs/index.html 与源不一致，请本地 python tools/build_static.py 后提交";
+            exit 1;
+          }
+
+      - name: 静态页端到端（headless Chrome，本作业已预装）
+        run: python tests/test_static_page.py
+
+      - name: 手机端编码 API 冒烟
         run: |
           python phone/serve.py --port 8123 &
           sleep 3
@@ -36,3 +66,6 @@ jobs:
                -d '{"kind":"text","text":"hello","format":"gbk"}'
           curl -s -X POST http://127.0.0.1:8123/api/calibration \
                -H 'Content-Type: application/json' -d '{"format":"bmp"}'
+
+      - name: 部署前自检脚本可用
+        run: python phone/doctor.py --port 8199

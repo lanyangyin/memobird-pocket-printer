@@ -1,5 +1,9 @@
-/* app.js — 手机端控制台
- * 分工：Python(serve.py) 负责渲染/抖动/BMP/帧封装；本文件只负责 Web Bluetooth 传输。
+/* app.js — 双模式控制台
+ *
+ *  服务端模式：页面由 phone/serve.py 提供 → 编码在 Python 里做（Pillow，质量最好）
+ *  浏览器模式：纯静态托管（如 GitHub Pages）→ 编码在浏览器里做（encoder.js + canvas）
+ *
+ * BLE 部分两种模式完全一样，都走 Web Bluetooth。
  */
 'use strict';
 
@@ -12,8 +16,18 @@ const CHR_ISSC_N = '49535343-1e4d-4bd9-ba61-23c647249616';
 
 const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
-let device = null, server = null, writeChr = null, notifyChr = null, busy = false;
-let imageDataUrl = null;
+
+const state = {
+  backend: 'unknown',      // 'server' | 'client'
+  device: null,
+  server: null,
+  writeChr: null,
+  notifyChr: null,
+  busy: false,
+  imageDataUrl: null,
+  imageEl: null,
+  gbkLoading: null,
+};
 
 /* ------------------------------------------------------------------ 工具 */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,7 +53,12 @@ const hex = (bytes, max = 24) => {
   return bytes.length > max ? a + ' …' : a;
 };
 
-/* --------------------------------------------------------------- 协议解析（仅用于日志） */
+function setMode(text, cls = '') {
+  const el = $('#mode');
+  if (el) { el.textContent = text; el.className = cls; }
+}
+
+/* ------------------------------------------------------- 报文解析（仅日志） */
 function parseFrame(bytes) {
   if (bytes.length < 5 || bytes[0] !== 0xaa) return null;
   const len = bytes[1] | (bytes[2] << 8);
@@ -47,104 +66,224 @@ function parseFrame(bytes) {
   const cmd = bytes[3];
   const payload = bytes.slice(4, 3 + len);
   const tlvs = [];
-  for (let i = 0; i + 3 <= payload.length; ) {
+  for (let i = 0; i + 3 <= payload.length;) {
     const tag = payload[i];
     const l = payload[i + 1] | (payload[i + 2] << 8);
-    const v = payload.slice(i + 3, i + 3 + l);
-    tlvs.push(`tag=0x${tag.toString(16)} len=${l} ${hex(v, 12)}`);
+    tlvs.push(`tag=0x${tag.toString(16)} len=${l} ${hex(payload.slice(i + 3, i + 3 + l), 12)}`);
     i += 3 + l;
   }
   return { cmd, len, tlvs };
 }
 
-/* ------------------------------------------------------------------ 连接 */
+/* ------------------------------------------------------------ 后端探测 */
+async function detectBackend() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    const r = await fetch('/api/health', { cache: 'no-store', signal: ctrl.signal });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.ok) {
+        state.backend = 'server';
+        return j;
+      }
+    }
+  } catch (e) { /* 没有服务端 —— 走浏览器模式 */ }
+  finally { clearTimeout(timer); }
+  state.backend = 'client';
+  return null;
+}
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
+
+/* --------------------------------------------------- GBK 码表（按需加载） */
+function ensureGbk() {
+  if (window.GBK) return Promise.resolve(window.GBK);
+  if (state.gbkLoading) return state.gbkLoading;
+  state.gbkLoading = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'gbk.js';
+    s.onload = () => {
+      log(`GBK 码表就绪（${window.GBK ? window.GBK.valid : '?'} 个码位）`);
+      resolve(window.GBK || null);
+    };
+    s.onerror = () => {
+      log('GBK 码表加载失败 → 文字将转成位图（慢一些）', 'warn');
+      resolve(null);
+    };
+    document.head.appendChild(s);
+  });
+  return state.gbkLoading;
+}
+
+/* -------------------------------------------------------- 编码（双模式） */
+async function encodeRequest(req) {
+  if (state.backend === 'server') {
+    const j = await api('/api/encode', req);
+    return { frames: j.frames.map(b64ToBytes), meta: j.meta, source: 'server' };
+  }
+  return encodeClient(req);
+}
+
+async function encodeClient(req) {
+  const E = window.MBEncoder;
+  const R = window.MBRender;
+  if (!E || !R) throw new Error('编码器未加载（encoder.js / render.js 缺失）');
+
+  const mode = req.mode || 'threshold';
+  const format = req.format === 'raw' ? 'raw' : 'bmp';
+
+  // 文字 + GBK 帧：最快路径
+  if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk') {
+    const gbk = await ensureGbk();
+    if (gbk) {
+      const job = E.jobFromText(req.text || '', gbk.encode);
+      if (job) return { ...job, source: 'client' };
+      log('文本含 GBK 无法表示的字符 → 自动转位图', 'warn');
+    }
+  }
+
+  // 文本/图片 → 灰度 → 抖动 → 位图任务
+  let grayed;
+  if (req.kind === 'image') {
+    if (!state.imageEl) {
+      state.imageEl = await loadImage(req.dataUrl || state.imageDataUrl);
+    }
+    grayed = await R.imageToGray(state.imageEl);
+  } else {
+    grayed = R.textToGray(req.text || '', req);
+  }
+
+  let gray = grayed.gray;
+  if (req.invert) {
+    for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
+  }
+
+  const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, 128);
+  const job = E.jobFromRaw(d.raw, d.w, d.h, format, !req.vflip);
+  return { ...job, source: 'client', raw: d.raw };
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('图片解码失败'));
+    img.src = src;
+  });
+}
+
+/* ------------------------------------------------------------------ 预览 */
+async function previewRequest(req) {
+  if (state.backend === 'server') {
+    const r = await fetch('/api/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    $('#preview').src = URL.createObjectURL(await r.blob());
+    return;
+  }
+  const job = await encodeClient({ ...req, format: 'raw' });
+  $('#preview').src = window.MBRender.rawToDataURL(job.meta.width, job.meta.height, job.raw, 2);
+}
+
+/* ------------------------------------------------------------ BLE 连接 */
 function pickWrite(services) {
   const all = [];
   for (const s of services) for (const c of s.characteristics) all.push({ svc: s, chr: c });
-
   const byUuid = (u) => all.find((x) => x.chr.uuid.toLowerCase().startsWith(u));
-  let pick = byUuid(CHR_WRITE);
-  if (!pick) pick = byUuid(CHR_ISSC_W);
-  if (!pick) pick = all.find((x) => x.chr.properties.write || x.chr.properties.writeWithoutResponse);
-
-  let note = byUuid(CHR_NOTIFY) || byUuid(CHR_ISSC_N)
+  let pick = byUuid(CHR_WRITE) || byUuid(CHR_ISSC_W)
+    || all.find((x) => x.chr.properties.write || x.chr.properties.writeWithoutResponse);
+  const note = byUuid(CHR_NOTIFY) || byUuid(CHR_ISSC_N)
     || all.find((x) => x.chr.properties.notify || x.chr.properties.indicate);
-  return { write: pick && pick.chr, notify: note && note.chr, table: all };
+  return { write: pick && pick.chr, notify: note && note.chr };
+}
+
+async function dumpGatt() {
+  if (!state.server) return;
+  const lines = [];
+  const services = await state.server.getPrimaryServices();
+  for (const s of services) {
+    lines.push(`service ${s.uuid}`);
+    for (const c of await s.getCharacteristics()) {
+      const props = Object.entries(c.properties).filter(([, v]) => v).map(([k]) => k).join(',');
+      lines.push(`   chr ${c.uuid}  [${props}]`);
+    }
+  }
+  const out = $('#gatt-out');
+  if (out) out.textContent = lines.join('\n');
+  return lines;
 }
 
 async function connect() {
-  if (busy) return;
-  busy = true;
+  if (state.busy) return false;
+  state.busy = true;
   try {
     log('请求蓝牙设备…（在弹窗里选打印机）');
-    device = await navigator.bluetooth.requestDevice({
+    state.device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [SVC_FF00, 0xff80, 0xfee7, SVC_ISSC, 0x180a],
     });
-    log(`选中：${device.name || '(无名)'} ${device.id}`, 'ok');
+    log(`选中：${state.device.name || '(无名)'}`, 'ok');
 
-    device.addEventListener('gattserverdisconnected', () => {
-      $('#conn').textContent = '已断开（' + (device.name || device.id) + '）';
+    state.device.addEventListener('gattserverdisconnected', () => {
+      $('#conn').textContent = `已断开（${state.device.name || state.device.id}）`;
       $('#conn').className = 'conn err';
       log('设备断开', 'warn');
-      writeChr = null;
+      state.writeChr = null;
     });
 
-    server = await device.gatt.connect();
-    const services = await server.getPrimaryServices();
-    const { write, notify, table } = pickWrite(services);
+    state.server = await state.device.gatt.connect();
+    const services = await state.server.getPrimaryServices();
+    const { write, notify } = pickWrite(services);
 
     const manual = $('#write-uuid').value.trim();
     if (manual) {
-      const s = await server.getPrimaryService(SVC_FF00).catch(() => null);
-      writeChr = s ? await s.getCharacteristic(manual).catch(() => write) : write;
+      const s = await state.server.getPrimaryService(SVC_FF00).catch(() => null);
+      state.writeChr = s ? await s.getCharacteristic(manual).catch(() => write) : write;
     } else {
-      writeChr = write;
+      state.writeChr = write;
     }
-    notifyChr = notify;
+    state.notifyChr = notify;
 
-    if (!writeChr) throw new Error('没找到可写特征值 —— 点「探测 GATT」把结果发我');
-    log(`写入特征值：${writeChr.uuid}`, 'ok');
-    if (notifyChr) {
+    if (!state.writeChr) throw new Error('没找到可写特征值 —— 点「探测 GATT」把结果发我');
+    log(`写入特征值：${state.writeChr.uuid}`, 'ok');
+
+    if (state.notifyChr) {
       try {
-        await notifyChr.startNotifications();
-        notifyChr.addEventListener('characteristicvaluechanged', (e) => {
+        await state.notifyChr.startNotifications();
+        state.notifyChr.addEventListener('characteristicvaluechanged', (e) => {
           const v = new Uint8Array(e.target.value.buffer);
           const f = parseFrame(v);
           log(`notify ${v.length}B ${hex(v)}${f ? ` | cmd=0x${f.cmd.toString(16)} ${f.tlvs.join(' ; ')}` : ''}`, 'hex');
         });
-        log(`通知特征值：${notifyChr.uuid}`, 'ok');
+        log(`通知特征值：${state.notifyChr.uuid}`, 'ok');
       } catch (e) {
         log('订阅通知失败（不影响打印）：' + e.message, 'warn');
       }
     }
 
-    $('#conn').textContent = `已连接 ${device.name || device.id} · 写 ${writeChr.uuid.slice(4, 8)}`;
+    $('#conn').textContent = `已连接 ${state.device.name || state.device.id} · 写 ${state.writeChr.uuid.slice(4, 8)}`;
     $('#conn').className = 'conn ok';
     return true;
   } catch (e) {
     log('连接失败：' + (e.message || e), 'err');
     $('#conn').textContent = '未连接';
     $('#conn').className = 'conn err';
-    // 失败时自动把 GATT 表打出来，方便定位特征值
-    if (server) {
-      try {
-        const services = await server.getPrimaryServices();
-        const lines = [];
-        for (const s of services) {
-          lines.push(`service ${s.uuid}`);
-          for (const c of await s.getCharacteristics()) {
-            const props = Object.entries(c.properties).filter(([, v]) => v).map(([k]) => k).join(',');
-            lines.push(`   chr ${c.uuid}  [${props}]`);
-          }
-        }
-        $('#gatt-out').textContent = lines.join('\n');
-        log('已自动输出 GATT 表到「调试」页', 'warn');
-      } catch { /* 忽略 */ }
-    }
+    try { await dumpGatt(); log('已自动输出 GATT 表到「调试」页', 'warn'); } catch { /* ignore */ }
     return false;
   } finally {
-    busy = false;
+    state.busy = false;
   }
 }
 
@@ -159,98 +298,72 @@ async function writeAll(bytes, label = '') {
   for (let i = 0; i < total; i += chunk) {
     const part = bytes.subarray(i, Math.min(i + chunk, total));
     try {
-      if (writeChr.properties.writeWithoutResponse) {
-        await writeChr.writeValueWithoutResponse(part);
+      if (state.writeChr.properties.writeWithoutResponse) {
+        await state.writeChr.writeValueWithoutResponse(part);
       } else {
-        await writeChr.writeValue(part);
+        await state.writeChr.writeValue(part);
       }
     } catch (e) {
       try {
-        await writeChr.writeValue(part);
+        await state.writeChr.writeValue(part);
       } catch (e2) {
         throw new Error(`写入失败 @${i}/${total}: ${e2.message || e2}`);
       }
     }
     sent += part.length;
     bar.style.width = ((sent / total) * 100).toFixed(1) + '%';
-    if (chunk <= 20 && (i / chunk) % 8 === 0) await sleep(4);   // 小分片时给协议栈一点空隙
+    if (chunk <= 20 && (i / chunk) % 8 === 0) await sleep(4);
   }
-  const ms = performance.now() - t0;
-  bar.style.width = '100%';
-  log(`${label} 完成 ${total}B / ${Math.ceil(total / chunk)} 片，${ms.toFixed(0)}ms`, 'ok');
+  log(`${label} 完成 ${total}B / ${Math.ceil(total / chunk)} 片，${(performance.now() - t0).toFixed(0)}ms`, 'ok');
 }
 
 async function sendJob(job, label) {
-  if (!writeChr) throw new Error('还没连接打印机');
+  if (!state.writeChr) throw new Error('还没连接打印机');
   if (job.meta && job.meta.preheat && $('#preheat').checked) {
     log(`预热 ${job.meta.preheat}B`);
     await writeAll(new Uint8Array(job.meta.preheat), '预热');
     await sleep(120);
   }
-  const frames = job.frames.map(b64ToBytes);
-  log(`共 ${frames.length} 帧 / ${job.meta ? job.meta.bytes : '?'}B（${job.meta ? job.meta.format : ''}）`);
+  const frames = job.frames;
+  log(`共 ${frames.length} 帧 / ${job.meta ? job.meta.bytes : '?'}B（${job.meta ? job.meta.format : ''}${
+    job.source ? ' · ' + (job.source === 'server' ? 'Python 编码' : '浏览器编码') : ''}）`);
   for (let i = 0; i < frames.length; i++) {
     await writeAll(frames[i], `帧 ${i + 1}/${frames.length}`);
-    await sleep(30);   // 连发但别把缓冲写爆
+    await sleep(30);
   }
   log(`${label} 已全部发送`, 'ok');
 }
 
-/* ------------------------------------------------------------------ API */
-async function api(path, body) {
-  const r = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-  return r.json();
-}
+/* -------------------------------------------------------------- 请求构造 */
+const textReq = () => ({
+  kind: 'text',
+  text: $('#text').value,
+  fontSize: parseInt($('#font-size').value, 10),
+  mode: $('#mode-text').value,
+  invert: $('#invert-text').checked,
+  format: $('#fmt-text').value,
+});
 
-async function preview(body) {
-  const r = await fetch('/api/preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const blob = await r.blob();
-  $('#preview').src = URL.createObjectURL(blob);
-}
-
-function textReq() {
-  return {
-    kind: 'text',
-    text: $('#text').value,
-    fontSize: parseInt($('#font-size').value, 10),
-    mode: $('#mode-text').value,
-    invert: $('#invert-text').checked,
-    format: $('#fmt-text').value,
-  };
-}
-
-function imageReq() {
-  return {
-    kind: 'image',
-    dataUrl: imageDataUrl,
-    mode: $('#mode-image').value,
-    invert: $('#invert-image').checked,
-    format: $('#fmt-image').value,
-    vflip: $('#vflip').checked,
-  };
-}
+const imageReq = () => ({
+  kind: 'image',
+  dataUrl: state.imageDataUrl,
+  mode: $('#mode-image').value,
+  invert: $('#invert-image').checked,
+  format: $('#fmt-image').value,
+  vflip: $('#vflip').checked,
+});
 
 async function runPreview(req) {
   try {
-    await preview(req);
+    await previewRequest(req);
     log('预览已更新');
-  } catch (e) { log('预览失败：' + e.message, 'err'); }
+  } catch (e) { log('预览失败：' + (e.message || e), 'err'); }
 }
 
 async function runPrint(req, label) {
   try {
-    if (!writeChr) { log('先点「连接打印机」', 'warn'); return; }
-    const job = await api('/api/encode', req);
+    if (!state.writeChr) { log('先点「连接打印机」', 'warn'); return; }
+    const job = await encodeRequest(req);
     $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;
     await sendJob(job, label);
   } catch (e) {
@@ -259,17 +372,14 @@ async function runPrint(req, label) {
 }
 
 /* ------------------------------------------------------------------ 事件 */
-document.querySelectorAll('.tab').forEach((t) =>
-  t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
-    document.querySelectorAll('.pane').forEach((x) => x.classList.remove('active'));
-    t.classList.add('active');
-    $('#pane-' + t.dataset.tab).classList.add('active');
-  })
-);
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach((x) => x.classList.remove('active'));
+  t.classList.add('active');
+  $('#pane-' + t.dataset.tab).classList.add('active');
+}));
 
 $('#btn-connect').addEventListener('click', connect);
-
 $('#font-size').addEventListener('input', (e) => { $('#font-size-val').textContent = e.target.value; });
 
 $('#file').addEventListener('change', (e) => {
@@ -277,8 +387,9 @@ $('#file').addEventListener('change', (e) => {
   if (!f) return;
   const rd = new FileReader();
   rd.onload = () => {
-    imageDataUrl = rd.result;
-    $('#preview').src = imageDataUrl;
+    state.imageDataUrl = rd.result;
+    state.imageEl = null;
+    $('#preview').src = state.imageDataUrl;
     log(`已载入图片 ${(f.size / 1024).toFixed(0)}KB`);
   };
   rd.readAsDataURL(f);
@@ -288,52 +399,51 @@ $('#btn-preview-text').addEventListener('click', () => runPreview(textReq()));
 $('#btn-print-text').addEventListener('click', () => runPrint(textReq(), '文字打印'));
 
 $('#btn-preview-image').addEventListener('click', () => {
-  if (!imageDataUrl) { log('先选一张图片', 'warn'); return; }
+  if (!state.imageDataUrl) { log('先选一张图片', 'warn'); return; }
   runPreview(imageReq());
 });
 $('#btn-print-image').addEventListener('click', () => {
-  if (!imageDataUrl) { log('先选一张图片', 'warn'); return; }
+  if (!state.imageDataUrl) { log('先选一张图片', 'warn'); return; }
   runPrint(imageReq(), '图片打印');
 });
 
 $('#btn-calib').addEventListener('click', async () => {
   try {
-    if (!writeChr) { log('先点「连接打印机」', 'warn'); return; }
-    const job = await api('/api/calibration', { format: 'bmp', vflip: $('#vflip').checked });
-    runPreview({ kind: 'text', text: '校准图预览见下', fontSize: 18, mode: 'threshold' });
+    if (!state.writeChr) { log('先点「连接打印机」', 'warn'); return; }
+    let job;
+    if (state.backend === 'server') {
+      job = await api('/api/calibration', { format: 'bmp', vflip: $('#vflip').checked });
+      job = { frames: job.frames.map(b64ToBytes), meta: job.meta, source: 'server' };
+    } else {
+      const E = window.MBEncoder;
+      const R = window.MBRender;
+      const g = R.calibrationGray();
+      const d = E.ditherToRaw(g.gray, g.w, g.h, 'threshold', 128);
+      job = { ...E.jobFromRaw(d.raw, d.w, d.h, 'bmp', !$('#vflip').checked), source: 'client', raw: d.raw };
+      $('#preview').src = R.rawToDataURL(d.w, d.h, d.raw, 2);
+    }
+    $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;
     await sendJob(job, '校准图');
-    log('如果出来的图上下颠倒 → 勾选「垂直翻转」再试；如果全白 → 换「裸位图帧」再试', 'warn');
+    log('若上下颠倒 → 勾「垂直翻转」；全白 → 换「裸位图帧」；断行 → 分片改 20B', 'warn');
   } catch (e) { log('校准图失败：' + (e.message || e), 'err'); }
 });
 
 $('#btn-gatt').addEventListener('click', async () => {
-  const out = $('#gatt-out');
-  out.textContent = '';
-  if (!server) { out.textContent = '先连接'; return; }
+  if (!state.server) { log('先连接', 'warn'); return; }
   try {
-    const services = await server.getPrimaryServices();
-    const lines = [];
-    for (const s of services) {
-      lines.push(`service ${s.uuid}`);
-      const chars = await s.getCharacteristics();
-      for (const c of chars) {
-        const props = Object.entries(c.properties).filter(([, v]) => v).map(([k]) => k).join(',');
-        lines.push(`   chr ${c.uuid}  [${props}]`);
-      }
-    }
-    out.textContent = lines.join('\n');
+    await dumpGatt();
     log('GATT 表已输出（可复制发我）', 'ok');
-  } catch (e) {
-    out.textContent = '探测失败：' + e.message;
-  }
+  } catch (e) { log('探测失败：' + (e.message || e), 'err'); }
 });
 
 $('#btn-status').addEventListener('click', async () => {
-  if (!writeChr) { log('先连接', 'warn'); return; }
+  if (!state.writeChr) { log('先连接', 'warn'); return; }
   try {
-    await writeAll(new Uint8Array([0xaa, 0x01, 0x00, 0x01, 0x54]), '状态查询');
+    const frame = window.MBEncoder ? window.MBEncoder.statusFrame()
+      : new Uint8Array([0xaa, 0x01, 0x00, 0x01, 0x54]);
+    await writeAll(frame, '状态查询');
     log('已发状态查询，等 notify 回包（没反应说明该机型不支持）', 'warn');
-  } catch (e) { log('状态查询失败：' + e.message, 'err'); }
+  } catch (e) { log('状态查询失败：' + (e.message || e), 'err'); }
 });
 
 $('#btn-clear').addEventListener('click', () => { logEl.innerHTML = ''; });
@@ -351,14 +461,22 @@ $('#btn-copy').addEventListener('click', async () => {
     $('#btn-connect').disabled = true;
   }
   if (!window.isSecureContext) {
-    log('当前不是安全上下文：请用 http://127.0.0.1 或 localhost 打开', 'err');
+    log('当前不是安全上下文：请用 https:// 或 http://127.0.0.1 打开', 'err');
   }
-  try {
-    const h = await (await fetch('/api/health')).json();
-    $('#health').textContent = `server ${h.version} · PIL ${h.pil ? 'ok' : '缺失'}`;
-    if (!h.pil) log('服务端缺 Pillow：apt install python3-pil', 'err');
-    else log('服务就绪，先「连接打印机」再打印', 'ok');
-  } catch (e) {
-    log('连不上本地服务（是不是没跑 serve.py？）', 'err');
+
+  const health = await detectBackend();
+  if (state.backend === 'server') {
+    setMode(`编码：Python 服务端 v${health.version}`, 'ok');
+    log(`服务端就绪（v${health.version}，PIL ${health.pil ? 'ok' : '缺失'}）`, 'ok');
+    if (!health.pil) log('服务端缺 Pillow：apt install python3-pil', 'err');
+  } else {
+    setMode('编码：浏览器本地（纯静态）', 'ok');
+    log('没有检测到 Python 服务端 → 切到浏览器本地编码（纯静态模式）', 'warn');
+    if (!window.MBEncoder || !window.MBRender) {
+      log('本地编码器缺失：encoder.js / render.js 没加载', 'err');
+    }
+    // 静态模式：预热加载 GBK 表，第一次打印就不用等
+    if ((($('#fmt-text') || {}).value || 'gbk') === 'gbk') ensureGbk();
   }
+  log('先「连接打印机」再打印', 'ok');
 })();

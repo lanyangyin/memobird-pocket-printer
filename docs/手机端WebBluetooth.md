@@ -20,8 +20,23 @@
 ```
 手机 Chrome（页面 + Web Bluetooth）  ──fetch──▶  127.0.0.1:8000（Python/PIL）
             │                                          │
-            └──────── GATT write ───────▶  打印机      └ 返回 frames(base64)
+            │                                          └ 返回 frames(base64)
+            │
+            ├── 没有服务端时（纯静态）→ 浏览器本地编码 encoder.js + canvas + GBK 码表
+            │
+            └──────── GATT write ───────▶  打印机
 ```
+
+两种模式的差别只在**编码在哪做**，蓝牙这一层完全相同：
+
+| | 服务端模式 | 纯静态模式 |
+|---|---|---|
+| 页面来源 | `phone/serve.py`（127.0.0.1） | 任意 https 托管（GitHub Pages） |
+| 文字渲染 | Pillow + 系统字体 | canvas + 系统字体 |
+| 抖动 | Python 浮点实现 | `encoder.js`（与 Python 逐字节等价，有测试） |
+| GBK | Python 内置 codec | 内嵌码表 `gbk.js`（21791 码位，79 KB） |
+| 图片缩放 | Pillow LANCZOS | canvas `imageSmoothingQuality=high` |
+| 需要装什么 | `python3-pil` | 什么都不用装 |
 
 ## 2. 为什么这台打印机一定有 BLE
 

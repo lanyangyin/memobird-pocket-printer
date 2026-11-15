@@ -16,9 +16,23 @@ memobird_printer/
 ├── cloud.py    咕咕机开放平台 open.memobird.cn
 └── cli.py      命令行
 
-web/            手机端网页（Chrome Web Bluetooth 传输 + 预览/校准/调试面板）
-phone/serve.py  本地服务：网页 + 编码 API（Python 只做编码，蓝牙交给浏览器）
+web/            网页控制台（两种跑法见下）
+├── index.html  页面骨架
+├── app.js      UI + Web Bluetooth 传输 + 双模式调度
+├── encoder.js  纯 JS 编码器（帧/TLV/抖动/BMP），与 Python 逐字节等价
+├── render.js   canvas 渲染（文字/图片/校准图 → 灰度）
+└── gbk.js      GBK 码表（自动生成，21791 个码位，79 KB）
+phone/serve.py  本地服务：页面 + 编码 API（Python 做编码，浏览器只搬字节）
 ```
+
+**两种跑法，同一份代码：**
+
+| 跑法 | 编码在哪 | 需要什么 | 适用于 |
+|---|---|---|---|
+| **服务端模式** | Python + Pillow | `phone/serve.py` + `python3-pil` | 手机 Termux 里跑，图像质量最好、可离线 |
+| **纯静态模式** | 浏览器（encoder.js） | 只要一个 https 或 localhost 页面 | GitHub Pages / 任何静态托管，零后端 |
+
+两种模式下**蓝牙传输完全一样**（都是 Web Bluetooth），差别只在编码：静态模式里文字也能走 GBK 帧（靠内嵌码表），所以速度不会退化。
 
 | 文字预览 | Atkinson 抖动 | 校准图 |
 |---|---|---|
@@ -142,6 +156,27 @@ cd ~/memobird-pocket-printer && python3 phone/serve.py     # 或 bash phone/run.
 
 完整步骤见 **[`docs/部署文档.md`](docs/部署文档.md)**（部署/自检/后台常驻/校准/排错全套），
 设计取舍与原理见 [`docs/手机端WebBluetooth.md`](docs/手机端WebBluetooth.md)。
+
+## 🌐 纯静态版（GitHub Pages，零后端）
+
+同一份 `web/` 可以打成**单文件**静态页，直接挂 Pages：
+
+```bash
+python tools/build_static.py      # → docs/index.html（约 120 KB，gzip 64 KB）
+```
+
+启用后访问 `https://<用户名>.github.io/<仓库名>/`
+（仓库 → Settings → Pages → Source: *Deploy from a branch* → Branch: `main` / `docs` → Save）
+
+| 特点 | 说明 |
+|---|---|
+| 零后端 | 手机 Chrome 直接开 URL，不需要 Termux / 服务端 / root |
+| 编码在浏览器 | canvas 渲染 + `encoder.js` 抖动封帧 + 内嵌 GBK 码表（79 KB） |
+| 文字仍然快 | 走 GBK 帧 1–4 次写，速度和服务端模式一样 |
+| 代价 | 图片缩放用 canvas（略逊 Pillow 的 LANCZOS）；页面首屏需联网（**打印内容不外发**） |
+
+已用真 Chrome 验证（`python tests/test_static_page.py`，`file://` 打开、零服务端，18 项断言）：
+页面自动切到浏览器编码、浏览器生成的「你好」GBK 帧与 Python **逐字节相同**、校准图与码表可用。
 
 ## 抓 App 自己的私有接口（可选）
 

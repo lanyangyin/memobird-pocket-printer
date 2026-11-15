@@ -103,6 +103,61 @@ _BAYER8 = (
     (15, 47, 7, 39, 13, 45, 5, 37), (63, 31, 55, 23, 61, 29, 53, 21),
 )
 
+# 浓度档位 → (阈值, 横向膨化, 纵向膨化)
+# 热敏打印机"发灰"时，光调阈值往往不够（细笔画会断），所以要配合笔画膨化。
+DARKEN_PRESETS = {
+    0: (128, 0, 0),      # 标准
+    1: (152, 1, 0),      # 加深
+    2: (172, 1, 1),      # 更黑
+    3: (192, 2, 1),      # 最黑（细字会粘在一起，适合大字号/图形）
+}
+
+
+def dilate_black(raw: bytes, w: int, h: int, horiz: int = 0, vert: int = 0) -> bytes:
+    """把黑点向周围膨胀（形态学 dilation）—— 补偿打印机偏浅，让笔画变粗。"""
+    if horiz <= 0 and vert <= 0:
+        return raw
+    rb = (w + 7) // 8
+    grid = [bytearray(w) for _ in range(h)]
+    for y in range(h):
+        base = y * rb
+        row = grid[y]
+        for x in range(w):
+            if raw[base + (x >> 3)] & (0x80 >> (x & 7)):
+                row[x] = 1
+
+    if horiz > 0:
+        for _ in range(horiz):
+            for y in range(h):
+                src = grid[y][:]
+                row = grid[y]
+                for x in range(w):
+                    if src[x]:
+                        if x > 0:
+                            row[x - 1] = 1
+                        row[x] = 1
+                        if x < w - 1:
+                            row[x + 1] = 1
+    if vert > 0:
+        for _ in range(vert):
+            snap = [r[:] for r in grid]
+            for y in range(h):
+                for x in range(w):
+                    if snap[y][x]:
+                        if y > 0:
+                            grid[y - 1][x] = 1
+                        if y < h - 1:
+                            grid[y + 1][x] = 1
+
+    out = bytearray(rb * h)
+    for y in range(h):
+        base = y * rb
+        row = grid[y]
+        for x in range(w):
+            if row[x]:
+                out[base + (x >> 3)] |= 0x80 >> (x & 7)
+    return bytes(out)
+
 
 def _pack_threshold(gray_px: Sequence[int], w: int, h: int, threshold: int) -> bytes:
     rb = (w + 7) // 8
@@ -116,14 +171,29 @@ def _pack_threshold(gray_px: Sequence[int], w: int, h: int, threshold: int) -> b
     return bytes(out)
 
 
-def dither_to_raw(img: Image.Image, mode: DitherMode = "floyd", threshold: int = 128) -> tuple[int, int, bytes]:
-    """灰度图 → (w, h, 1bpp 裸位图)，1=黑点，MSB 在左，行按字节对齐。"""
+def dither_to_raw(
+    img: Image.Image,
+    mode: DitherMode = "floyd",
+    threshold: int | None = None,
+    darken: int = 0,
+) -> tuple[int, int, bytes]:
+    """
+    灰度图 → (w, h, 1bpp 裸位图)，1=黑点，MSB 在左，行按字节对齐。
+
+    darken: 0=标准 / 1=加深 / 2=更黑 / 3=最黑
+            热敏打印偏浅时用它：提高阈值 + 笔画膨化（见 DARKEN_PRESETS）。
+    threshold: 显式指定二值化阈值；不给就按 darken 档位取默认值。
+    """
+    preset_th, h_exp, v_exp = DARKEN_PRESETS.get(int(darken or 0), DARKEN_PRESETS[0])
+    th = preset_th if threshold is None else int(threshold)
+
     g = img.convert("L")
     w, h = g.size
     px = list(g.getdata())
 
     if mode in ("none", "threshold"):
-        return w, h, _pack_threshold(px, w, h, threshold)
+        raw = _pack_threshold(px, w, h, th)
+        return w, h, dilate_black(raw, w, h, h_exp, v_exp)
 
     if mode == "bayer":
         out = bytearray((w + 7) // 8 * h)
@@ -132,10 +202,10 @@ def dither_to_raw(img: Image.Image, mode: DitherMode = "floyd", threshold: int =
             brow = _BAYER8[y & 7]
             base, row = y * rb, y * w
             for x in range(w):
-                t = (brow[x & 7] + 0.5) * 255.0 / 64.0
+                t = (brow[x & 7] + 0.5) * 255.0 / 64.0 * (th / 128.0)
                 if px[row + x] < t:
                     out[base + (x >> 3)] |= 0x80 >> (x & 7)
-        return w, h, bytes(out)
+        return w, h, dilate_black(bytes(out), w, h, h_exp, v_exp)
 
     kernels = {
         "floyd": ((1, 0, 7 / 16), (-1, 1, 3 / 16), (0, 1, 5 / 16), (1, 1, 1 / 16)),
@@ -149,7 +219,7 @@ def dither_to_raw(img: Image.Image, mode: DitherMode = "floyd", threshold: int =
         for x in range(w):
             i = y * w + x
             old = buf[i]
-            new = 255.0 if old >= threshold else 0.0
+            new = 255.0 if old >= th else 0.0
             buf[i] = new
             err = old - new
             if err:
@@ -157,7 +227,8 @@ def dither_to_raw(img: Image.Image, mode: DitherMode = "floyd", threshold: int =
                     nx, ny = x + dx, y + dy
                     if 0 <= nx < w and 0 <= ny < h:
                         buf[ny * w + nx] += err * k
-    return w, h, _pack_threshold([int(v) for v in buf], w, h, threshold)
+    raw = _pack_threshold([int(v) for v in buf], w, h, th)
+    return w, h, dilate_black(raw, w, h, h_exp, v_exp)
 
 
 def raw_to_image(w: int, h: int, raw: bytes) -> Image.Image:

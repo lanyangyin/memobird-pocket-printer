@@ -130,6 +130,7 @@ def _render(req: dict):
     mode = req.get("mode") or "threshold"
     invert = bool(req.get("invert"))
     width = int(req.get("width") or 384)
+    darken = int(req.get("darken") or 0)
 
     if req.get("kind") == "image" and req.get("dataUrl"):
         img = prepare(_load_image(req["dataUrl"]), mode=mode, width=width, invert=invert)
@@ -141,7 +142,7 @@ def _render(req: dict):
             font_size=int(req.get("fontSize") or 24),
             invert=invert,
         )
-    return dither_to_raw(img, mode)
+    return dither_to_raw(img, mode, darken=darken)
 
 
 def _vflip(h: int, raw: bytes, row_bytes: int) -> bytes:
@@ -166,6 +167,11 @@ def encode(req: dict) -> dict:
     kind = req.get("kind") or "text"
     fmt = (req.get("format") or "").lower()
     tier = _size_tier(req.get("fontSize"))
+    darken = int(req.get("darken") or 0)
+
+    # GBK 文本帧由固件自己渲染，浓度（阈值/膨化）改不了它 → 要加深就自动转位图
+    if kind == "text" and fmt in ("", "gbk") and darken > 0:
+        fmt = "bmp"
 
     # ---- 文本：优先走 GBK 文本帧（体积最小、最快） ----
     if kind == "text" and fmt in ("", "gbk"):
@@ -214,7 +220,8 @@ def encode(req: dict) -> dict:
     return {
         "frames": frames,
         "meta": {"format": used, "chunks": job.chunks, "bytes": payload_bytes,
-                 "preheat": packet.PREHEAT, "width": w, "height": h, "sizeTier": tier},
+                 "preheat": packet.PREHEAT, "width": w, "height": h,
+                 "sizeTier": tier, "darken": darken},
     }
 
 

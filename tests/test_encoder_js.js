@@ -55,11 +55,12 @@ for (const c of fixtures.text_jobs) {
 }
 
 /* -------------------------------------------------------------- 3. 抖动 */
-console.log('\n3) 抖动（灰度 → 1bpp 裸位图）');
+console.log('\n3) 抖动（灰度 → 1bpp 裸位图，含浓度档位）');
 for (const c of fixtures.dither) {
   const gray = Uint8Array.from(Buffer.from(c.gray_hex, 'hex'));
-  const out = enc.ditherToRaw(gray, c.w, c.h, c.mode, c.threshold);
-  check(`${c.name} ${c.mode} ${c.w}x${c.h} th=${c.threshold}`, hex(out.raw), c.raw_hex);
+  const out = enc.ditherToRaw(gray, c.w, c.h, c.mode, c.threshold, c.darken || 0);
+  check(`${c.name} ${c.mode} ${c.w}x${c.h} th=${c.threshold} darken=${c.darken || 0}`,
+    hex(out.raw), c.raw_hex);
 }
 
 /* ---------------------------------------------------------------- 4. BMP */

@@ -82,16 +82,21 @@ def main() -> int:
 
     # ---- 3) 抖动（裸位图）----
     cases = [
-        ("gradient", gradient(64, 40), "floyd", 128),
-        ("gradient", gradient(64, 40), "atkinson", 128),
-        ("gradient", gradient(64, 40), "bayer", 128),
-        ("checker", checker(48, 33), "threshold", 128),
-        ("gradient", gradient(40, 24), "threshold", 96),
+        ("gradient", gradient(64, 40), "floyd", 128, 0),
+        ("gradient", gradient(64, 40), "atkinson", 128, 0),
+        ("gradient", gradient(64, 40), "bayer", 128, 0),
+        ("checker", checker(48, 33), "threshold", 128, 0),
+        ("gradient", gradient(40, 24), "threshold", 96, 0),
+        # 浓度档位：阈值偏移 + 笔画膨化（打浅时用）
+        ("gradient", gradient(64, 40), "threshold", 128, 1),
+        ("gradient", gradient(64, 40), "threshold", 128, 2),
+        ("gradient", gradient(40, 24), "floyd", 128, 3),
+        ("checker", checker(48, 33), "floyd", 128, 2),
     ]
-    for name, img, mode, th in cases:
-        w, h, raw = dither_to_raw(img, mode, th)
+    for name, img, mode, th, darken in cases:
+        w, h, raw = dither_to_raw(img, mode, threshold=th, darken=darken)
         fixtures["dither"].append({
-            "name": name, "w": w, "h": h, "mode": mode, "threshold": th,
+            "name": name, "w": w, "h": h, "mode": mode, "threshold": th, "darken": darken,
             "gray_hex": img.convert("L").tobytes().hex(),
             "raw_hex": raw.hex(),
         })

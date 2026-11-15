@@ -39,6 +39,16 @@
       <p class="hint">GBK 文本帧由打印机自己渲染，字号只有固件档位（≤26→普通 / ≤36→大 / 更大→最大）；
         想要精确像素字号请把「传输」改成位图。</p>
       <div class="row">
+        <label>浓度
+          <select id="darken-text">
+            <option value="0">标准</option>
+            <option value="1">加深（阈值 152 + 横膨化）</option>
+            <option value="2">更黑（172 + 纵横膨化）</option>
+            <option value="3">最黑（192 + 2px 膨化）</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
         <label class="chk"><input id="bold" type="checkbox"> 加粗</label>
         <label class="chk"><input id="underline" type="checkbox"> 下划线</label>
         <label class="chk"><input id="feed" type="checkbox" checked> 打后走纸</label>
@@ -91,6 +101,16 @@
           </select>
         </label>
         <label class="chk"><input id="vflip" type="checkbox"> 垂直翻转</label>
+      </div>
+      <div class="row">
+        <label>浓度
+          <select id="darken-image">
+            <option value="0">标准</option>
+            <option value="1">加深（阈值 152 + 横膨化）</option>
+            <option value="2">更黑（172 + 纵横膨化）</option>
+            <option value="3">最黑（192 + 2px 膨化）</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button id="btn-preview-image" class="ghost">预览</button>

@@ -15,7 +15,7 @@ const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
 /** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 const state = {
   backend: 'unknown',      // 'server' | 'client'
@@ -62,7 +62,10 @@ function setMode(text, cls = '') {
 function describeFrame(bytes) {
   const f = BLE.parseFrame(bytes);
   if (!f) return '';
-  const tlvs = f.tlvs.map((t) => `tag=0x${t.tag.toString(16)} len=${t.len} ${hex(t.value, 12)}`);
+  const tlvs = f.tlvs.map((t) => {
+    const dec = t.len === 1 ? `(${t.value[0]})` : '';
+    return `tag=0x${t.tag.toString(16)} len=${t.len} ${hex(t.value, 12)}${dec}`;
+  });
   return ` | cmd=0x${f.cmd.toString(16)}${f.sumOk ? '' : ' (校验和错误!)'} ${tlvs.join(' ; ')}`;
 }
 
@@ -131,9 +134,11 @@ async function encodeClient(req) {
 
   const mode = req.mode || 'threshold';
   const format = req.format === 'raw' ? 'raw' : 'bmp';
+  const darken = Math.max(0, Math.min(3, parseInt(req.darken, 10) || 0));
 
   // 文字 + GBK 帧：最快路径（字号走固件档位 tag 0x10）
-  if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk') {
+  // 但浓度（阈值/膨化）改不了固件渲染的文本，所以选了浓度就自动走位图
+  if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk' && darken === 0) {
     const gbk = await ensureGbk();
     if (gbk) {
       const job = E.jobFromText(req.text || '', gbk.encode, {
@@ -165,7 +170,11 @@ async function encodeClient(req) {
     for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
   }
 
-  const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, 128);
+  if (darken > 0 && (req.format || 'gbk') === 'gbk') {
+    log(`浓度档位 ${darken} 需要位图编码（GBK 文本由固件渲染，改不了深浅）`, 'warn');
+  }
+
+  const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
   const job = E.jobFromRaw(d.raw, d.w, d.h, format, { official: true, topDown: !req.vflip });
   if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
   return { ...job, source: 'client', raw: d.raw };
@@ -348,6 +357,7 @@ const textReq = () => ({
   mode: $('#mode-text').value,
   invert: $('#invert-text').checked,
   format: $('#fmt-text').value,
+  darken: parseInt(($('#darken-text') || {}).value || '0', 10),
   feed: !!($('#feed') && $('#feed').checked),
 });
 
@@ -358,6 +368,7 @@ const imageReq = () => ({
   invert: $('#invert-image').checked,
   format: $('#fmt-image').value,
   vflip: $('#vflip').checked,
+  darken: parseInt(($('#darken-image') || {}).value || '0', 10),
   feed: !!($('#feed') && $('#feed').checked),
 });
 

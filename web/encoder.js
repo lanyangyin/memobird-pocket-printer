@@ -173,28 +173,87 @@
     return out;
   }
 
-  /** 灰度（Uint8Array, w*h, 0=黑）→ 1bpp 裸位图（1=黑，MSB 在左，行按字节对齐） */
-  function ditherToRaw(gray, w, h, mode, threshold) {
-    mode = mode || 'floyd';
-    threshold = threshold == null ? 128 : threshold;
+  /** 浓度档位 → [阈值, 横向膨化, 纵向膨化]；热敏偏浅时用 */
+  const DARKEN_PRESETS = {
+    0: [128, 0, 0],
+    1: [152, 1, 0],
+    2: [172, 1, 1],
+    3: [192, 2, 1],
+  };
 
+  /** 黑点膨胀（形态学 dilation）—— 补偿打印机偏浅，让笔画变粗 */
+  function dilateBlack(raw, w, h, horiz, vert) {
+    if ((!horiz && !vert) || !w || !h) return raw;
+    const rb = (w + 7) >> 3;
+    const grid = [];
+    for (let y = 0; y < h; y++) {
+      const row = new Uint8Array(w);
+      const base = y * rb;
+      for (let x = 0; x < w; x++) row[x] = (raw[base + (x >> 3)] & (0x80 >> (x & 7))) ? 1 : 0;
+      grid.push(row);
+    }
+    for (let n = 0; n < horiz; n++) {
+      for (let y = 0; y < h; y++) {
+        const src = grid[y].slice();
+        const row = grid[y];
+        for (let x = 0; x < w; x++) {
+          if (!src[x]) continue;
+          if (x > 0) row[x - 1] = 1;
+          row[x] = 1;
+          if (x < w - 1) row[x + 1] = 1;
+        }
+      }
+    }
+    for (let n = 0; n < vert; n++) {
+      const snap = grid.map((r) => r.slice());
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (!snap[y][x]) continue;
+          if (y > 0) grid[y - 1][x] = 1;
+          if (y < h - 1) grid[y + 1][x] = 1;
+        }
+      }
+    }
+    const out = new Uint8Array(rb * h);
+    for (let y = 0; y < h; y++) {
+      const base = y * rb;
+      const row = grid[y];
+      for (let x = 0; x < w; x++) if (row[x]) out[base + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+    return out;
+  }
+
+  /**
+   * 灰度 → 1bpp 裸位图
+   * @param {number} threshold 二值化阈值；给 null/undefined 则按 darken 档位取
+   * @param {number} darken 0 标准 / 1 加深 / 2 更黑 / 3 最黑
+   */
+  function ditherToRaw(gray, w, h, mode, threshold, darken) {
+    mode = mode || 'floyd';
+    const preset = DARKEN_PRESETS[darken | 0] || DARKEN_PRESETS[0];
+    const th = (threshold == null) ? preset[0] : threshold;
+    const hExp = preset[1];
+    const vExp = preset[2];
+
+    let raw;
     if (mode === 'none' || mode === 'threshold') {
-      return { w, h, raw: packThreshold(gray, w, h, threshold) };
+      raw = packThreshold(gray, w, h, th);
+      return { w, h, raw: dilateBlack(raw, w, h, hExp, vExp) };
     }
 
     if (mode === 'bayer') {
       const rb = (w + 7) >> 3;
-      const out = new Uint8Array(rb * h);
+      raw = new Uint8Array(rb * h);
       for (let y = 0; y < h; y++) {
         const brow = BAYER8[y & 7];
         const base = y * rb;
         const row = y * w;
         for (let x = 0; x < w; x++) {
-          const t = (brow[x & 7] + 0.5) * 255.0 / 64.0;
-          if (gray[row + x] < t) out[base + (x >> 3)] |= 0x80 >> (x & 7);
+          const t = (brow[x & 7] + 0.5) * 255.0 / 64.0 * (th / 128.0);
+          if (gray[row + x] < t) raw[base + (x >> 3)] |= 0x80 >> (x & 7);
         }
       }
-      return { w, h, raw: out };
+      return { w, h, raw: dilateBlack(raw, w, h, hExp, vExp) };
     }
 
     const kernels = {
@@ -211,7 +270,7 @@
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         const old = buf[i];
-        const nv = old >= threshold ? 255.0 : 0.0;
+        const nv = old >= th ? 255.0 : 0.0;
         buf[i] = nv;
         const err = old - nv;
         if (err !== 0) {
@@ -226,7 +285,8 @@
     // Python: _pack_threshold([int(v) for v in buf], ...)，int() 向零截断
     const quant = new Uint8Array(w * h);
     for (let i = 0; i < quant.length; i++) quant[i] = Math.trunc(buf[i]);
-    return { w, h, raw: packThreshold(quant, w, h, threshold) };
+    raw = packThreshold(quant, w, h, th);
+    return { w, h, raw: dilateBlack(raw, w, h, hExp, vExp) };
   }
 
   /**
@@ -346,7 +406,7 @@
     preheatBytes, statusFrame,
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
-    ditherToRaw, rawToBmp, packThreshold, flipRows,
+    ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
     jobFromRaw, jobFromText, utf8ToGray,
   };
 });

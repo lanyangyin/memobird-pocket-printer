@@ -186,6 +186,16 @@ footer {
       <p class="hint">GBK 文本帧由打印机自己渲染，字号只有固件档位（≤26→普通 / ≤36→大 / 更大→最大）；
         想要精确像素字号请把「传输」改成位图。</p>
       <div class="row">
+        <label>浓度
+          <select id="darken-text">
+            <option value="0">标准</option>
+            <option value="1">加深（阈值 152 + 横膨化）</option>
+            <option value="2">更黑（172 + 纵横膨化）</option>
+            <option value="3">最黑（192 + 2px 膨化）</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
         <label class="chk"><input id="bold" type="checkbox"> 加粗</label>
         <label class="chk"><input id="underline" type="checkbox"> 下划线</label>
         <label class="chk"><input id="feed" type="checkbox" checked> 打后走纸</label>
@@ -238,6 +248,16 @@ footer {
           </select>
         </label>
         <label class="chk"><input id="vflip" type="checkbox"> 垂直翻转</label>
+      </div>
+      <div class="row">
+        <label>浓度
+          <select id="darken-image">
+            <option value="0">标准</option>
+            <option value="1">加深（阈值 152 + 横膨化）</option>
+            <option value="2">更黑（172 + 纵横膨化）</option>
+            <option value="3">最黑（192 + 2px 膨化）</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button id="btn-preview-image" class="ghost">预览</button>
@@ -609,28 +629,87 @@ footer {
     return out;
   }
 
-  /** 灰度（Uint8Array, w*h, 0=黑）→ 1bpp 裸位图（1=黑，MSB 在左，行按字节对齐） */
-  function ditherToRaw(gray, w, h, mode, threshold) {
-    mode = mode || 'floyd';
-    threshold = threshold == null ? 128 : threshold;
+  /** 浓度档位 → [阈值, 横向膨化, 纵向膨化]；热敏偏浅时用 */
+  const DARKEN_PRESETS = {
+    0: [128, 0, 0],
+    1: [152, 1, 0],
+    2: [172, 1, 1],
+    3: [192, 2, 1],
+  };
 
+  /** 黑点膨胀（形态学 dilation）—— 补偿打印机偏浅，让笔画变粗 */
+  function dilateBlack(raw, w, h, horiz, vert) {
+    if ((!horiz && !vert) || !w || !h) return raw;
+    const rb = (w + 7) >> 3;
+    const grid = [];
+    for (let y = 0; y < h; y++) {
+      const row = new Uint8Array(w);
+      const base = y * rb;
+      for (let x = 0; x < w; x++) row[x] = (raw[base + (x >> 3)] & (0x80 >> (x & 7))) ? 1 : 0;
+      grid.push(row);
+    }
+    for (let n = 0; n < horiz; n++) {
+      for (let y = 0; y < h; y++) {
+        const src = grid[y].slice();
+        const row = grid[y];
+        for (let x = 0; x < w; x++) {
+          if (!src[x]) continue;
+          if (x > 0) row[x - 1] = 1;
+          row[x] = 1;
+          if (x < w - 1) row[x + 1] = 1;
+        }
+      }
+    }
+    for (let n = 0; n < vert; n++) {
+      const snap = grid.map((r) => r.slice());
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (!snap[y][x]) continue;
+          if (y > 0) grid[y - 1][x] = 1;
+          if (y < h - 1) grid[y + 1][x] = 1;
+        }
+      }
+    }
+    const out = new Uint8Array(rb * h);
+    for (let y = 0; y < h; y++) {
+      const base = y * rb;
+      const row = grid[y];
+      for (let x = 0; x < w; x++) if (row[x]) out[base + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+    return out;
+  }
+
+  /**
+   * 灰度 → 1bpp 裸位图
+   * @param {number} threshold 二值化阈值；给 null/undefined 则按 darken 档位取
+   * @param {number} darken 0 标准 / 1 加深 / 2 更黑 / 3 最黑
+   */
+  function ditherToRaw(gray, w, h, mode, threshold, darken) {
+    mode = mode || 'floyd';
+    const preset = DARKEN_PRESETS[darken | 0] || DARKEN_PRESETS[0];
+    const th = (threshold == null) ? preset[0] : threshold;
+    const hExp = preset[1];
+    const vExp = preset[2];
+
+    let raw;
     if (mode === 'none' || mode === 'threshold') {
-      return { w, h, raw: packThreshold(gray, w, h, threshold) };
+      raw = packThreshold(gray, w, h, th);
+      return { w, h, raw: dilateBlack(raw, w, h, hExp, vExp) };
     }
 
     if (mode === 'bayer') {
       const rb = (w + 7) >> 3;
-      const out = new Uint8Array(rb * h);
+      raw = new Uint8Array(rb * h);
       for (let y = 0; y < h; y++) {
         const brow = BAYER8[y & 7];
         const base = y * rb;
         const row = y * w;
         for (let x = 0; x < w; x++) {
-          const t = (brow[x & 7] + 0.5) * 255.0 / 64.0;
-          if (gray[row + x] < t) out[base + (x >> 3)] |= 0x80 >> (x & 7);
+          const t = (brow[x & 7] + 0.5) * 255.0 / 64.0 * (th / 128.0);
+          if (gray[row + x] < t) raw[base + (x >> 3)] |= 0x80 >> (x & 7);
         }
       }
-      return { w, h, raw: out };
+      return { w, h, raw: dilateBlack(raw, w, h, hExp, vExp) };
     }
 
     const kernels = {
@@ -647,7 +726,7 @@ footer {
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         const old = buf[i];
-        const nv = old >= threshold ? 255.0 : 0.0;
+        const nv = old >= th ? 255.0 : 0.0;
         buf[i] = nv;
         const err = old - nv;
         if (err !== 0) {
@@ -662,7 +741,8 @@ footer {
     // Python: _pack_threshold([int(v) for v in buf], ...)，int() 向零截断
     const quant = new Uint8Array(w * h);
     for (let i = 0; i < quant.length; i++) quant[i] = Math.trunc(buf[i]);
-    return { w, h, raw: packThreshold(quant, w, h, threshold) };
+    raw = packThreshold(quant, w, h, th);
+    return { w, h, raw: dilateBlack(raw, w, h, hExp, vExp) };
   }
 
   /**
@@ -782,7 +862,7 @@ footer {
     preheatBytes, statusFrame,
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
-    ditherToRaw, rawToBmp, packThreshold, flipRows,
+    ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
     jobFromRaw, jobFromText, utf8ToGray,
   };
 });
@@ -1032,7 +1112,7 @@ const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
 /** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 const state = {
   backend: 'unknown',      // 'server' | 'client'
@@ -1079,7 +1159,10 @@ function setMode(text, cls = '') {
 function describeFrame(bytes) {
   const f = BLE.parseFrame(bytes);
   if (!f) return '';
-  const tlvs = f.tlvs.map((t) => `tag=0x${t.tag.toString(16)} len=${t.len} ${hex(t.value, 12)}`);
+  const tlvs = f.tlvs.map((t) => {
+    const dec = t.len === 1 ? `(${t.value[0]})` : '';
+    return `tag=0x${t.tag.toString(16)} len=${t.len} ${hex(t.value, 12)}${dec}`;
+  });
   return ` | cmd=0x${f.cmd.toString(16)}${f.sumOk ? '' : ' (校验和错误!)'} ${tlvs.join(' ; ')}`;
 }
 
@@ -1148,9 +1231,11 @@ async function encodeClient(req) {
 
   const mode = req.mode || 'threshold';
   const format = req.format === 'raw' ? 'raw' : 'bmp';
+  const darken = Math.max(0, Math.min(3, parseInt(req.darken, 10) || 0));
 
   // 文字 + GBK 帧：最快路径（字号走固件档位 tag 0x10）
-  if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk') {
+  // 但浓度（阈值/膨化）改不了固件渲染的文本，所以选了浓度就自动走位图
+  if (req.kind !== 'image' && (req.format || 'gbk') === 'gbk' && darken === 0) {
     const gbk = await ensureGbk();
     if (gbk) {
       const job = E.jobFromText(req.text || '', gbk.encode, {
@@ -1182,7 +1267,11 @@ async function encodeClient(req) {
     for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
   }
 
-  const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, 128);
+  if (darken > 0 && (req.format || 'gbk') === 'gbk') {
+    log(`浓度档位 ${darken} 需要位图编码（GBK 文本由固件渲染，改不了深浅）`, 'warn');
+  }
+
+  const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
   const job = E.jobFromRaw(d.raw, d.w, d.h, format, { official: true, topDown: !req.vflip });
   if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
   return { ...job, source: 'client', raw: d.raw };
@@ -1365,6 +1454,7 @@ const textReq = () => ({
   mode: $('#mode-text').value,
   invert: $('#invert-text').checked,
   format: $('#fmt-text').value,
+  darken: parseInt(($('#darken-text') || {}).value || '0', 10),
   feed: !!($('#feed') && $('#feed').checked),
 });
 
@@ -1375,6 +1465,7 @@ const imageReq = () => ({
   invert: $('#invert-image').checked,
   format: $('#fmt-image').value,
   vflip: $('#vflip').checked,
+  darken: parseInt(($('#darken-image') || {}).value || '0', 10),
   feed: !!($('#feed') && $('#feed').checked),
 });
 

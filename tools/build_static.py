@@ -21,7 +21,7 @@ WEB = os.path.join(ROOT, "web")
 OUT = os.path.join(ROOT, "docs", "index.html")
 
 CSS = ["style.css"]
-JS = ["encoder.js", "render.js", "gbk.js", "app.js"]
+JS = ["ble-util.js", "encoder.js", "render.js", "gbk.js", "app.js"]
 
 
 def read(name: str) -> str:

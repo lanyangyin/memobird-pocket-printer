@@ -39,6 +39,9 @@ jobs:
             exit 1;
           }
 
+      - name: BLE 选特征值逻辑（Node，回归 Chrome 新版 API）
+        run: node tests/test_ble_util.js
+
       - name: JS 编码器与 Python 逐字节一致（Node）
         run: |
           node --version

@@ -169,7 +169,29 @@ def main() -> int:
         check("编码后端 = 浏览器本地", mode_text, "编码：浏览器本地（纯静态）")
         check("MBEncoder 已加载", cdp.eval("typeof MBEncoder", await_promise=False), "object")
         check("MBRender 已加载", cdp.eval("typeof MBRender", await_promise=False), "object")
+        check("MBBle 已加载", cdp.eval("typeof MBBle", await_promise=False), "object")
         check("MB_STANDALONE 标志", cdp.eval("window.MB_STANDALONE === true", await_promise=False), True)
+
+        # 1b) BLE 选特征值：回归"Chrome 新版没有同步 characteristics 属性"
+        print("\n1b) BLE 选特征值（模拟 GT1，只实现 getCharacteristics）")
+        js_ble = """(async () => {
+          const mk = (uuid, props) => ({ uuid, properties: props });
+          const services = [{ uuid: '0000ff00-0000-1000-8000-00805f9b34fb',
+            getCharacteristics: async () => [
+              mk('0000ff02-0000-1000-8000-00805f9b34fb', { write: true, writeWithoutResponse: true }),
+              mk('0000ff01-0000-1000-8000-00805f9b34fb', { notify: true }),
+            ] }];
+          const r = await MBBle.pickWrite(services);
+          return JSON.stringify({
+            write: r.write && r.write.uuid,
+            notify: r.notify && r.notify.uuid,
+            count: r.all.length,
+          });
+        })()"""
+        got_ble = json.loads(cdp.eval(js_ble))
+        check("挑到 ff02", got_ble["write"], "0000ff02-0000-1000-8000-00805f9b34fb")
+        check("挑到 ff01", got_ble["notify"], "0000ff01-0000-1000-8000-00805f9b34fb")
+        check("特征值计数", got_ble["count"], 2)
 
         # 2) 文字 GBK 帧：与 Python 逐字节比对
         print("\n2) 浏览器内编码（文字 → GBK 帧）")

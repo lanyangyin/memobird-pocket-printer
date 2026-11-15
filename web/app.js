@@ -7,12 +7,9 @@
  */
 'use strict';
 
-const SVC_FF00 = 0xff00;
-const CHR_WRITE = '0000ff02-0000-1000-8000-00805f9b34fb';
-const CHR_NOTIFY = '0000ff01-0000-1000-8000-00805f9b34fb';
-const SVC_ISSC = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
-const CHR_ISSC_W = '49535343-8841-43f4-a8d4-ecbe34729bb3';
-const CHR_ISSC_N = '49535343-1e4d-4bd9-ba61-23c647249616';
+// BLE 选特征值 / 回包解析都在 web/ble-util.js（有单元测试，兼容新旧 Chrome）
+const BLE = window.MBBle;
+const { SVC_FF00, CHR_WRITE, CHR_NOTIFY } = BLE;
 
 const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
@@ -59,20 +56,11 @@ function setMode(text, cls = '') {
 }
 
 /* ------------------------------------------------------- 报文解析（仅日志） */
-function parseFrame(bytes) {
-  if (bytes.length < 5 || bytes[0] !== 0xaa) return null;
-  const len = bytes[1] | (bytes[2] << 8);
-  if (bytes.length < 3 + len + 1) return null;
-  const cmd = bytes[3];
-  const payload = bytes.slice(4, 3 + len);
-  const tlvs = [];
-  for (let i = 0; i + 3 <= payload.length;) {
-    const tag = payload[i];
-    const l = payload[i + 1] | (payload[i + 2] << 8);
-    tlvs.push(`tag=0x${tag.toString(16)} len=${l} ${hex(payload.slice(i + 3, i + 3 + l), 12)}`);
-    i += 3 + l;
-  }
-  return { cmd, len, tlvs };
+function describeFrame(bytes) {
+  const f = BLE.parseFrame(bytes);
+  if (!f) return '';
+  const tlvs = f.tlvs.map((t) => `tag=0x${t.tag.toString(16)} len=${t.len} ${hex(t.value, 12)}`);
+  return ` | cmd=0x${f.cmd.toString(16)}${f.sumOk ? '' : ' (校验和错误!)'} ${tlvs.join(' ; ')}`;
 }
 
 /* ------------------------------------------------------------ 后端探测 */
@@ -198,28 +186,25 @@ async function previewRequest(req) {
 }
 
 /* ------------------------------------------------------------ BLE 连接 */
-function pickWrite(services) {
-  const all = [];
-  for (const s of services) for (const c of s.characteristics) all.push({ svc: s, chr: c });
-  const byUuid = (u) => all.find((x) => x.chr.uuid.toLowerCase().startsWith(u));
-  let pick = byUuid(CHR_WRITE) || byUuid(CHR_ISSC_W)
-    || all.find((x) => x.chr.properties.write || x.chr.properties.writeWithoutResponse);
-  const note = byUuid(CHR_NOTIFY) || byUuid(CHR_ISSC_N)
-    || all.find((x) => x.chr.properties.notify || x.chr.properties.indicate);
-  return { write: pick && pick.chr, notify: note && note.chr };
+/** 取服务列表；若 getPrimaryServices() 没覆盖到已知服务，逐个补问一次 */
+async function servicesWithFallback(server) {
+  let services = [];
+  try { services = await server.getPrimaryServices(); } catch { services = []; }
+  const have = new Set(services.map((s) => String(s.uuid).toLowerCase()));
+  for (const uuid of BLE.OPTIONAL_SERVICES) {
+    if (have.has(String(uuid).toLowerCase())) continue;
+    try {
+      const s = await server.getPrimaryService(uuid);
+      if (s) services.push(s);
+    } catch { /* 该服务不存在，正常 */ }
+  }
+  return services;
 }
 
 async function dumpGatt() {
-  if (!state.server) return;
-  const lines = [];
-  const services = await state.server.getPrimaryServices();
-  for (const s of services) {
-    lines.push(`service ${s.uuid}`);
-    for (const c of await s.getCharacteristics()) {
-      const props = Object.entries(c.properties).filter(([, v]) => v).map(([k]) => k).join(',');
-      lines.push(`   chr ${c.uuid}  [${props}]`);
-    }
-  }
+  if (!state.server) return [];
+  const services = await servicesWithFallback(state.server);
+  const lines = await BLE.dumpGatt(services);
   const out = $('#gatt-out');
   if (out) out.textContent = lines.join('\n');
   return lines;
@@ -232,7 +217,7 @@ async function connect() {
     log('请求蓝牙设备…（在弹窗里选打印机）');
     state.device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [SVC_FF00, 0xff80, 0xfee7, SVC_ISSC, 0x180a],
+      optionalServices: BLE.OPTIONAL_SERVICES,
     });
     log(`选中：${state.device.name || '(无名)'}`, 'ok');
 
@@ -244,8 +229,9 @@ async function connect() {
     });
 
     state.server = await state.device.gatt.connect();
-    const services = await state.server.getPrimaryServices();
-    const { write, notify } = pickWrite(services);
+    const services = await servicesWithFallback(state.server);
+    const { write, notify, all, reason } = await BLE.pickWrite(services);
+    log(`读到 ${services.length} 个服务 / ${all.length} 个特征值`);
 
     const manual = $('#write-uuid').value.trim();
     if (manual) {
@@ -256,7 +242,7 @@ async function connect() {
     }
     state.notifyChr = notify;
 
-    if (!state.writeChr) throw new Error('没找到可写特征值 —— 点「探测 GATT」把结果发我');
+    if (!state.writeChr) throw new Error(reason || '没找到可写特征值 —— 点「探测 GATT」把结果发我');
     log(`写入特征值：${state.writeChr.uuid}`, 'ok');
 
     if (state.notifyChr) {
@@ -264,8 +250,7 @@ async function connect() {
         await state.notifyChr.startNotifications();
         state.notifyChr.addEventListener('characteristicvaluechanged', (e) => {
           const v = new Uint8Array(e.target.value.buffer);
-          const f = parseFrame(v);
-          log(`notify ${v.length}B ${hex(v)}${f ? ` | cmd=0x${f.cmd.toString(16)} ${f.tlvs.join(' ; ')}` : ''}`, 'hex');
+          log(`notify ${v.length}B ${hex(v)}${describeFrame(v)}`, 'hex');
         });
         log(`通知特征值：${state.notifyChr.uuid}`, 'ok');
       } catch (e) {

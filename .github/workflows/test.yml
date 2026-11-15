@@ -1,0 +1,38 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow requests
+      - name: 库自检（帧/BMP/依赖）
+        run: python -m memobird_printer selftest
+      - name: 离线协议断言
+        run: python tests/test_protocol.py
+      - name: 编码引擎 API 冒烟测试
+        run: |
+          python phone/serve.py --port 8123 &
+          sleep 3
+          curl -s http://127.0.0.1:8123/api/health
+          curl -s -X POST http://127.0.0.1:8123/api/encode \
+               -H 'Content-Type: application/json' \
+               -d '{"kind":"text","text":"hello","format":"gbk"}'
+          curl -s -X POST http://127.0.0.1:8123/api/calibration \
+               -H 'Content-Type: application/json' -d '{"format":"bmp"}'

@@ -34,16 +34,23 @@ from memobird_printer.ble import BlePrinter    # noqa: E402
 TAGS = (0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x13)
 
 
-async def sample_once(address: str, wait: float = 1.5) -> device.DeviceInfo | None:
-    """一次采样 = 一次独立连接（避免长时间持有连接被固件踢掉）"""
-    try:
-        async with BlePrinter(address, echo=False) as b:
-            frames = await b.transact(device.status_frame(), wait=wait)
-            infos = [info for info in (device.parse_status(f) for f in frames) if info]
-            return infos[-1] if infos else None
-    except Exception as exc:                                  # noqa: BLE001
-        print(f"   (采样失败：{type(exc).__name__}: {exc})")
-        return None
+async def sample_once(address: str, wait: float = 1.5, retries: int = 2) -> device.DeviceInfo | None:
+    """一次采样 = 一次独立连接（避免长时间持有连接被固件踢掉）。
+
+    频繁连接时 Windows 偶发 "Characteristic ... was not found"（GATT 还没被发现完），
+    重连一次就好了，所以这里带重试。
+    """
+    for attempt in range(retries):
+        try:
+            async with BlePrinter(address, echo=False) as b:
+                frames = await b.transact(device.status_frame(), wait=wait)
+                infos = [info for info in (device.parse_status(f) for f in frames) if info]
+                if infos:
+                    return infos[-1]
+        except Exception as exc:                              # noqa: BLE001
+            if attempt == retries - 1:
+                print(f"   (采样失败：{type(exc).__name__}: {exc})")
+    return None
 
 
 async def main(args) -> int:
@@ -51,6 +58,7 @@ async def main(args) -> int:
     header = ["time", *[f"0x{t:02x}" for t in TAGS], "online"]
     print("时间         " + "  ".join(f"0x{t:02x}" for t in TAGS) + "  在线")
     offline = 0
+    last_vals = None
 
     for i in range(args.samples):
         info = await sample_once(args.address, args.wait)
@@ -58,11 +66,18 @@ async def main(args) -> int:
         vals = [info.value(t) if info else None for t in TAGS]
         online = info is not None
         offline = 0 if online else offline + 1
-        print(f"{t}   " + "  ".join(f"{'-' if v is None else v:>4}" for v in vals)
-              + f"   {'✓' if online else '✗'}", flush=True)
-        rows.append([t, *vals, online])
 
-        # 每采一次就落盘，跑到一半也能看
+        changed = last_vals is not None and vals != last_vals
+        if (not args.changes_only) or last_vals is None or changed or not online:
+            mark = "★ " if changed else "  "
+            print(f"{mark}{t}   " + "  ".join(f"{'-' if v is None else v:>4}" for v in vals)
+                  + f"   {'✓' if online else '✗'}", flush=True)
+            if changed:
+                for idx, tag in enumerate(TAGS, start=1):
+                    if last_vals[idx - 1] != vals[idx - 1]:
+                        print(f"     Δ 0x{tag:02x}: {last_vals[idx - 1]} → {vals[idx - 1]}", flush=True)
+        last_vals = vals
+        rows.append([t, *vals, online])
         if args.csv:
             new_file = not os.path.exists(args.csv)
             with open(args.csv, "a", encoding="utf-8", newline="") as f:
@@ -102,4 +117,5 @@ if __name__ == "__main__":
     ap.add_argument("--interval", type=float, default=120.0, help="两次采样间隔（秒）")
     ap.add_argument("--wait", type=float, default=1.5)
     ap.add_argument("--csv", default="")
+    ap.add_argument("--changes-only", action="store_true", help="只在状态变化时打印")
     sys.exit(asyncio.run(main(ap.parse_args())))

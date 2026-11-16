@@ -67,9 +67,8 @@
       <div class="row">
         <label>传输
           <select id="fmt-text">
-            <option value="gbk">GBK 文本帧（最快，字号只有固件档位）</option>
+            <option value="gbk">GBK 文本帧（最快，字号由固件决定）</option>
             <option value="bmp">转位图（可精确字号/加粗/浓度）</option>
-            <option value="raw">裸位图帧（仅调试，GT1 不支持）</option>
           </select>
         </label>
       </div>
@@ -96,8 +95,7 @@
       <div class="row">
         <label>传输
           <select id="fmt-image">
-            <option value="bmp">BMP 文件帧（推荐，唯一可靠）</option>
-            <option value="raw">裸位图帧（仅调试，GT1 不支持）</option>
+            <option value="bmp">BMP 文件帧（唯一可靠）</option>
           </select>
         </label>
         <label class="chk"><input id="vflip" type="checkbox"> 垂直翻转</label>

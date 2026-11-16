@@ -230,16 +230,16 @@ def encode(req: dict) -> dict:
     if req.get("vflip"):
         raw = _vflip(h, raw, row_bytes)
 
+    # 裸位图帧 GT1 不认（没有 BMP 头，固件不知道尺寸），已从界面移除；
+    # 这里保留降级路径，避免老请求打到不支持的格式上。
     if fmt == "raw":
-        job = packet.build_bitmap_job(raw)
-        payload_bytes = len(raw)
-        used = "raw"
-    else:
-        # official=True：与官方 SDK 一致（biHeight 正 + 行序 top-down），GT1 只认这个
-        bmp = raw_to_bmp(w, h, raw, official=True)
-        job = packet.build_bmp_job(bmp)
-        payload_bytes = len(bmp)
-        used = "bmp"
+        fmt = "bmp"
+
+    # official=True：与官方 SDK 一致（biHeight 正 + 行序 top-down），GT1 只认这个
+    bmp = raw_to_bmp(w, h, raw, official=True)
+    job = packet.build_bmp_job(bmp)
+    payload_bytes = len(bmp)
+    used = "bmp"
 
     frames = [base64.b64encode(f).decode() for f in job.frames]
     if req.get("feed"):

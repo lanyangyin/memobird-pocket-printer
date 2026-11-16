@@ -15,7 +15,7 @@ const $ = (s) => document.querySelector(s);
 const logEl = $('#log');
 
 /** 页面版本：改代码时顺手加一，方便确认手机上加载的是新版 */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 
 const state = {
   backend: 'unknown',      // 'server' | 'client'
@@ -133,7 +133,11 @@ async function encodeClient(req) {
   if (!E || !R) throw new Error('编码器未加载（encoder.js / render.js 缺失）');
 
   const mode = req.mode || 'threshold';
-  const format = req.format === 'raw' ? 'raw' : 'bmp';
+  // 裸位图帧（只有像素、没有 BMP 头）GT1 不认 —— 已从界面移除，这里只做兜底降级
+  let format = 'bmp';
+  if (req.format === 'raw') {
+    log('GT1 不支持裸位图帧，已自动改用 BMP', 'warn');
+  }
   const darken = Math.max(0, Math.min(3, parseInt(req.darken, 10) || 0));
 
   // 文字 + GBK 帧：最快路径（字号走固件档位 tag 0x10）

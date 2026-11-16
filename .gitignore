@@ -35,3 +35,8 @@ server.pid
 
 # ---- 打包产物 ----
 dist/
+
+# ---- 实验数据（本地采集，不入库）----
+charge.csv
+warm.csv
+*.charge.csv

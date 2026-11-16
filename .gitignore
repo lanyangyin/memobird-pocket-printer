@@ -41,3 +41,7 @@ charge.csv
 warm.csv
 *.charge.csv
 *_watch.csv
+
+# ---- 临时生成物 ----
+cal*_preview.png
+*_preview.png

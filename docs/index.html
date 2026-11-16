@@ -264,6 +264,8 @@ footer {
       <div class="actions">
         <button id="btn-calib" class="primary">打印校准图</button>
         <button id="btn-sizeprobe" class="ghost">字号档位测试</button>
+        <button id="btn-led-on" class="ghost">开灯</button>
+        <button id="btn-led-off" class="ghost">关灯</button>
         <button id="btn-device" class="ghost">读设备信息</button>
         <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
@@ -430,6 +432,37 @@ footer {
   /** cmd 0x09：读序列号 */
   const SERIAL_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x09, 0x4c]);
 
+  /** 构造一帧：AA | LEN(2LE) | CMD | PAYLOAD | SUM（与 encoder.js 同算法，这里只够用） */
+  function buildFrame(cmd, payload) {
+    payload = payload || new Uint8Array(0);
+    const len = payload.length + 1;
+    const body = new Uint8Array(3 + payload.length);
+    body[0] = len & 0xff;
+    body[1] = (len >> 8) & 0xff;
+    body[2] = cmd;
+    body.set(payload, 3);
+    let sum = 0;
+    for (let i = 0; i < body.length; i++) sum += body[i];
+    const out = new Uint8Array(body.length + 2);
+    out[0] = 0xaa;
+    out.set(body, 1);
+    out[out.length - 1] = (0x56 - (sum & 0xff)) & 0xff;
+    return out;
+  }
+
+  /** 单字节 TLV */
+  function tlv8(tag, value) {
+    return Uint8Array.from([tag, 0x01, 0x00, value & 0xff]);
+  }
+
+  /** cmd 0x03 设置帧（tag=设置项，value=值）。已验证：0x03=指示灯，0x02=某设置项 */
+  function settingFrame(tag, value) {
+    return buildFrame(0x03, tlv8(tag, value));
+  }
+
+  const LED_ON_FRAME = settingFrame(0x03, 1);
+  const LED_OFF_FRAME = settingFrame(0x03, 0);
+
   /** 把状态帧解析成 {cmd, serial, fields:[{tag,label,int,ascii,confirmed}]} */
   function parseStatus(bytes) {
     const f = parseFrame(bytes);
@@ -487,8 +520,9 @@ footer {
     OPTIONAL_SERVICES,
     serviceCharacteristics, collectCharacteristics, pickWrite, parseFrame, dumpGatt,
     isWritable, isNotifiable,
-    // 设备信息（cmd 0x01/0x09）
+    // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus,
+    buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
   };
 });
 
@@ -701,6 +735,19 @@ footer {
       return out;
     }
 
+    /**
+     * 开关指示灯（cmd 0x03, tag 0x03 —— 实机验证过因果）
+     * @returns {Promise<number|null>} 读回的状态值（1 亮 / 0 灭）
+     */
+    async function setLed(on, waitMs) {
+      const wait = waitMs == null ? 900 : waitMs;
+      await query(on ? BLE.LED_ON_FRAME : BLE.LED_OFF_FRAME, wait);
+      const infos = await readDeviceInfo(wait + 400);
+      const last = infos[infos.length - 1];
+      const led = last && last.fields.find((f) => f.tag === 0x03);
+      return led ? led.int : null;
+    }
+
     /** 探测 GATT：返回文本行，供调试页展示 */
     async function dumpGatt() {
       if (!state.server) return [];
@@ -710,7 +757,7 @@ footer {
 
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
-      servicesWithFallback, query, readDeviceInfo,
+      servicesWithFallback, query, readDeviceInfo, setLed,
       get connected() { return state.connected; },
     };
   }
@@ -1666,6 +1713,18 @@ $('#btn-device').addEventListener('click', async () => {
     log(`设备信息：序列号 ${f.serial || '?'} · 0x01=${pick(0x01)} · 灯=${pick(0x03)} · 0x02=${pick(0x02)}`, 'ok');
   } catch (e) { log('读设备信息失败：' + (e.message || e), 'err'); }
 });
+
+$('#btn-led-on').addEventListener('click', () => toggleLed(true));
+$('#btn-led-off').addEventListener('click', () => toggleLed(false));
+
+async function toggleLed(on) {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  try {
+    const state = await link.setLed(on);
+    if (state === null) log(on ? '已发开灯（状态没读回来）' : '已发关灯（状态没读回来）', 'warn');
+    else log(`指示灯 = ${state}（${state ? '亮' : '灭'}）`, state === (on ? 1 : 0) ? 'ok' : 'warn');
+  } catch (e) { log('灯操作失败：' + (e.message || e), 'err'); }
+}
 
 $('#btn-gatt').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }

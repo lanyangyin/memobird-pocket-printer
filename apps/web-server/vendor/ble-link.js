@@ -206,6 +206,19 @@
       return out;
     }
 
+    /**
+     * 开关指示灯（cmd 0x03, tag 0x03 —— 实机验证过因果）
+     * @returns {Promise<number|null>} 读回的状态值（1 亮 / 0 灭）
+     */
+    async function setLed(on, waitMs) {
+      const wait = waitMs == null ? 900 : waitMs;
+      await query(on ? BLE.LED_ON_FRAME : BLE.LED_OFF_FRAME, wait);
+      const infos = await readDeviceInfo(wait + 400);
+      const last = infos[infos.length - 1];
+      const led = last && last.fields.find((f) => f.tag === 0x03);
+      return led ? led.int : null;
+    }
+
     /** 探测 GATT：返回文本行，供调试页展示 */
     async function dumpGatt() {
       if (!state.server) return [];
@@ -215,7 +228,7 @@
 
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
-      servicesWithFallback, query, readDeviceInfo,
+      servicesWithFallback, query, readDeviceInfo, setLed,
       get connected() { return state.connected; },
     };
   }

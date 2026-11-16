@@ -154,6 +154,18 @@ $('#btn-device').addEventListener('click', async () => {
   } catch (e) { log('读设备信息失败：' + (e.message || e), 'err'); }
 });
 
+$('#btn-led-on').addEventListener('click', () => toggleLed(true));
+$('#btn-led-off').addEventListener('click', () => toggleLed(false));
+
+async function toggleLed(on) {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  try {
+    const state = await link.setLed(on);
+    if (state === null) log(on ? '已发开灯（状态没读回来）' : '已发关灯（状态没读回来）', 'warn');
+    else log(`指示灯 = ${state}（${state ? '亮' : '灭'}）`, state === (on ? 1 : 0) ? 'ok' : 'warn');
+  } catch (e) { log('灯操作失败：' + (e.message || e), 'err'); }
+}
+
 $('#btn-gatt').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }
   try {

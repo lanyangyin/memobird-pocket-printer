@@ -162,6 +162,16 @@ class BleWorker:
     def read_info(self, timeout: float = 30) -> list[dict]:
         return self.call(self._read_info(), timeout)
 
+    async def _set_setting(self, tag: int, value: int) -> dict:
+        from memobird_printer import device
+        from memobird_printer.ble import BlePrinter
+
+        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
+            return await device.set_setting(dev, tag, value, wait=1.2)
+
+    def set_setting(self, tag: int, value: int, timeout: float = 30) -> dict:
+        return self.call(self._set_setting(tag, value), timeout)
+
 
 class SppWorker:
     def __init__(self, port: str, baudrate: int = 115200):
@@ -287,6 +297,16 @@ class PrintService:
         return {"ok": True, "backend": self.backend, "target": self.target,
                 "device": infos[-1] if infos else None}
 
+    def device_led(self, on: bool) -> dict:
+        """开关指示灯（cmd 0x03 tag 0x03）。只有 ble 后端能做。"""
+        if self.backend != "ble" or not isinstance(self.worker, BleWorker):
+            return {"ok": False, "backend": self.backend, "error": "只有 ble 后端能控制指示灯"}
+        with self.lock:
+            state = self.worker.set_setting(0x03, 1 if on else 0)
+        led = state.get(0x03)
+        return {"ok": True, "requested": 1 if on else 0, "led": led,
+                "state": {f"0x{k:02x}": v for k, v in sorted(state.items())}}
+
     def health(self) -> dict:
         info = {"ok": True, "version": VERSION, "backend": self.backend, "target": self.target}
         if isinstance(self.worker, FakeWorker):
@@ -386,7 +406,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "error": "unauthorized"})
                 return
             try:
-                self._json(200, self.service.device_info())
+                out = self.service.device_info()
+                self._json(200 if out.get("ok") else 400, out)
             except Exception as exc:                                # noqa: BLE001
                 self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         elif path in ("/", "/index.html"):
@@ -397,6 +418,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+
+        # 设备控制：只支持已验证的"开/关灯"
+        if path == "/device/led":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                body = self._read_json()
+                out = self.service.device_led(bool(body.get("on", True)))
+                self._json(200 if out.get("ok") else 400, out)
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:                                # noqa: BLE001
+                self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+
         if path not in ("/print", "/print/text", "/print/image"):
             self._json(404, {"ok": False, "error": "not found"})
             return

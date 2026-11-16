@@ -136,6 +136,37 @@
   /** cmd 0x09：读序列号 */
   const SERIAL_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x09, 0x4c]);
 
+  /** 构造一帧：AA | LEN(2LE) | CMD | PAYLOAD | SUM（与 encoder.js 同算法，这里只够用） */
+  function buildFrame(cmd, payload) {
+    payload = payload || new Uint8Array(0);
+    const len = payload.length + 1;
+    const body = new Uint8Array(3 + payload.length);
+    body[0] = len & 0xff;
+    body[1] = (len >> 8) & 0xff;
+    body[2] = cmd;
+    body.set(payload, 3);
+    let sum = 0;
+    for (let i = 0; i < body.length; i++) sum += body[i];
+    const out = new Uint8Array(body.length + 2);
+    out[0] = 0xaa;
+    out.set(body, 1);
+    out[out.length - 1] = (0x56 - (sum & 0xff)) & 0xff;
+    return out;
+  }
+
+  /** 单字节 TLV */
+  function tlv8(tag, value) {
+    return Uint8Array.from([tag, 0x01, 0x00, value & 0xff]);
+  }
+
+  /** cmd 0x03 设置帧（tag=设置项，value=值）。已验证：0x03=指示灯，0x02=某设置项 */
+  function settingFrame(tag, value) {
+    return buildFrame(0x03, tlv8(tag, value));
+  }
+
+  const LED_ON_FRAME = settingFrame(0x03, 1);
+  const LED_OFF_FRAME = settingFrame(0x03, 0);
+
   /** 把状态帧解析成 {cmd, serial, fields:[{tag,label,int,ascii,confirmed}]} */
   function parseStatus(bytes) {
     const f = parseFrame(bytes);
@@ -193,7 +224,8 @@
     OPTIONAL_SERVICES,
     serviceCharacteristics, collectCharacteristics, pickWrite, parseFrame, dumpGatt,
     isWritable, isNotifiable,
-    // 设备信息（cmd 0x01/0x09）
+    // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus,
+    buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
   };
 });

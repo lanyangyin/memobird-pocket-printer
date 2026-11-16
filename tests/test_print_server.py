@@ -132,6 +132,12 @@ check("未知路径 404", code == 404)
 code, body = req("GET", "/status")
 check("GET /status 200", code == 200 and body.get("backend") == "fake")
 
+# 设备信息/控灯：fake 后端应该明确拒绝（而不是假装成功）
+code, body = req("GET", "/device")
+check("GET /device 在 fake 下 400", code == 400 and body.get("ok") is False, str(code))
+code, body = req("POST", "/device/led", {"on": True})
+check("POST /device/led 在 fake 下 400", code == 400 and body.get("ok") is False, str(code))
+
 # API key
 ps.Handler.api_key = "SECRET"
 code, body = req("POST", "/print", {"text": "no key"})

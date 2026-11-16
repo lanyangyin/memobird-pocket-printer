@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-phone/doctor.py — 部署前自检（在 proot Ubuntu 里跑，不需要打印机）
+apps/web-server/doctor.py — 实现 2 的部署前自检（在 proot Ubuntu 里跑，不需要打印机）
 
-    python3 phone/doctor.py                 # 默认查 8000 端口
-    python3 phone/doctor.py --port 8080
+    python3 apps/web-server/doctor.py                 # 默认查 8000 端口
+    python3 apps/web-server/doctor.py --port 8080
 
 逐项检查：Python 版本 / Pillow / 中文字体 / 目录完整性 / 端口占用 / 回环绑定 / 编码冒烟。
 任何一项 FAIL 都会给出可直接照抄的修复命令。
@@ -15,8 +15,14 @@ import os
 import socket
 import sys
 
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.path.dirname(os.path.dirname(HERE))   # 项目根（本文件在 apps/web-server/ 下）
 sys.path.insert(0, ROOT)
 
 OK, WARN, FAIL = "OK  ", "WARN", "FAIL"
@@ -64,7 +70,7 @@ def check_font() -> None:
 
 
 def check_tree() -> None:
-    need = ["web/index.html", "web/app.js", "web/style.css", "phone/serve.py", "memobird_printer/image.py"]
+    need = ["apps/web-server/index.html", "apps/web-server/app.js", "apps/web-server/vendor/ble-util.js", "apps/web-server/vendor/style.css", "apps/web-server/serve.py", "memobird_printer/image.py"]
     missing = [p for p in need if not os.path.isfile(os.path.join(ROOT, p))]
     if missing:
         add(FAIL, "目录完整性", "缺少: " + ", ".join(missing) + " → 重新解压/ git clone")
@@ -140,7 +146,7 @@ def main() -> int:
         print(f" {fails} 项必须修复（见上面 FAIL 行的命令），修完重跑本脚本。")
         return 1
     print(f" 通过{f'（{warns} 条提醒，不影响启动）' if warns else ''}。下一步：")
-    print(f"   python3 phone/serve.py --port {args.port}")
+    print(f"   python3 apps/web-server/serve.py --port {args.port}")
     print(f"   手机 Chrome 打开 http://127.0.0.1:{args.port}")
     return 0
 

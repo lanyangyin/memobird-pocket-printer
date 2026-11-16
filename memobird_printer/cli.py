@@ -22,6 +22,12 @@ import asyncio
 import json
 import sys
 
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from . import packet
 from .image import PRINTER_WIDTH, dither_to_raw, prepare, preview, raw_to_bmp
 

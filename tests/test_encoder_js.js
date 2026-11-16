@@ -12,8 +12,8 @@ const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
-const enc = require(path.join(ROOT, 'web', 'encoder.js'));
-const GBK = require(path.join(ROOT, 'web', 'gbk.js'));
+const enc = require(path.join(ROOT, 'shared', 'web', 'encoder.js'));
+const GBK = require(path.join(ROOT, 'shared', 'web', 'gbk.js'));
 const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures.json'), 'utf8'));
 
 let failed = 0;

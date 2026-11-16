@@ -3,7 +3,7 @@
 tests/test_static_page.py — 端到端验证「纯静态页」在真浏览器里能编码
 
 做法：起一个 headless Chrome 打开 docs/index.html（file://，没有任何服务端），
-      通过 DevTools 协议在页面里调用 encodeClient()，把生成的帧 hex 拿回来，
+      通过 DevTools 协议在页面里调用 encode()（apps/static-web/app.js 的顶层函数），把帧 hex 拿回来，
       和 Python 侧的帧逐字节比对。
 
     python tests/test_static_page.py                # 找不到浏览器就跳过（exit 0）
@@ -19,6 +19,12 @@ import shutil
 import socket
 import subprocess
 import sys
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import tempfile
 import time
 
@@ -121,7 +127,7 @@ def main() -> int:
         print("没找到 Chrome/Chromium —— 跳过（不影响其它测试）")
         return 0
     if not os.path.isfile(PAGE):
-        print(f"缺少 {PAGE} —— 先跑 python tools/build_static.py")
+        print(f"缺少 {PAGE} —— 先跑 python apps/static-web/build.py")
         return 1
 
     print(f"浏览器: {chrome}")
@@ -166,7 +172,7 @@ def main() -> int:
                 break
             time.sleep(0.25)
         print(f"\n1) 页面启动")
-        check("编码后端 = 浏览器本地", mode_text, "编码：浏览器本地（纯静态）")
+        check("编码模式 = 浏览器本地", "浏览器本地编码" in (mode_text or ""), True)
         check("MBEncoder 已加载", cdp.eval("typeof MBEncoder", await_promise=False), "object")
         check("MBRender 已加载", cdp.eval("typeof MBRender", await_promise=False), "object")
         check("MBBle 已加载", cdp.eval("typeof MBBle", await_promise=False), "object")
@@ -196,23 +202,21 @@ def main() -> int:
         # 2) 文字 GBK 帧：与 Python 逐字节比对
         print("\n2) 浏览器内编码（文字 → GBK 帧）")
         js = """(async () => {
-          await ensureGbk();
-          const j = await encodeClient({kind:'text', text:'你好', format:'gbk'});
+          const j = await encode({kind:'text', text:'你好', format:'gbk'});
           return JSON.stringify({
             hex: Array.from(j.frames[0], b => b.toString(16).padStart(2,'0')).join(''),
-            chunks: j.meta.chunks, bytes: j.meta.bytes, format: j.meta.format, source: j.source,
+            chunks: j.meta.chunks, bytes: j.meta.bytes, format: j.meta.format,
           });
         })()"""
         got = json.loads(cdp.eval(js))
         want_frame = packet.job_for_text("你好", encoding="gbk").frames[0].hex()
         check("帧 hex 与 Python 一致", got["hex"], want_frame)
         check("meta.format", got["format"], "gbk")
-        check("meta.source", got["source"], "client")
 
         # 3) 文字转位图（不依赖 GBK 的路径）
         print("\n3) 浏览器内编码（文字 → 位图 → BMP 任务）")
         js2 = """(async () => {
-          const j = await encodeClient({kind:'text', text:'Ab', format:'bmp', mode:'threshold'});
+          const j = await encode({kind:'text', text:'Ab', format:'bmp', mode:'threshold'});
           return JSON.stringify({
             chunks: j.meta.chunks, bytes: j.meta.bytes, w: j.meta.width, h: j.meta.height,
             head: Array.from(j.frames[0].slice(0,3), b => b.toString(16).padStart(2,'0')).join(''),

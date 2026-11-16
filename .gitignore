@@ -32,3 +32,6 @@ tools/gh/
 # ---- 运行态 ----
 server.log
 server.pid
+
+# ---- 打包产物 ----
+dist/

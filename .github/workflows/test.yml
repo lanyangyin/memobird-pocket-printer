@@ -24,51 +24,78 @@ jobs:
           python -m pip install --upgrade pip
           pip install pillow requests websocket-client
 
+      # ---------- 共享库 ----------
       - name: 库自检（帧/BMP/依赖）
         run: python -m memobird_printer selftest
 
-      - name: 离线协议断言（Python）
+      - name: 离线协议断言
         run: python tests/test_protocol.py
 
-      - name: 重新生成夹具与 GBK 码表（并检查是否与仓库一致）
+      # ---------- 生成物一致性 ----------
+      - name: 夹具与 GBK 码表可重现
         run: |
           python tools/gen_fixtures.py
           python tools/gen_gbk_table.py
-          git diff --exit-code -- tests/fixtures.json web/gbk.js || {
-            echo "::error::夹具/码表与仓库不一致，请在本地重新生成后提交";
-            exit 1;
-          }
+          git diff --exit-code -- tests/fixtures.json shared/web/gbk.js || {
+            echo "::error::夹具/码表与仓库不一致，请本地重新生成后提交"; exit 1; }
 
-      - name: BLE 选特征值逻辑（Node，回归 Chrome 新版 API）
+      - name: vendor 与 shared/web 一致
+        run: python tools/sync_vendor.py --check
+
+      # ---------- 实现 1：纯静态 ----------
+      - name: JS 编码器与 Python 逐字节一致（Node）
+        run: node tests/test_encoder_js.js
+
+      - name: BLE 选特征值逻辑（Node）
         run: node tests/test_ble_util.js
 
-      - name: JS 编码器与 Python 逐字节一致（Node）
+      - name: 构建纯静态单文件并检查可重现
         run: |
-          node --version
-          node tests/test_encoder_js.js
-
-      - name: 构建纯静态页并检查
-        run: |
-          python tools/build_static.py
+          python apps/static-web/build.py
           test -s docs/index.html
           git diff --exit-code -- docs/index.html || {
-            echo "::error::docs/index.html 与源不一致，请本地 python tools/build_static.py 后提交";
-            exit 1;
-          }
+            echo "::error::docs/index.html 与源不一致，请本地跑 apps/static-web/build.py 后提交"; exit 1; }
 
-      - name: 静态页端到端（headless Chrome，本作业已预装）
+      - name: 静态页端到端（headless Chrome，预装）
         run: python tests/test_static_page.py
 
-      - name: 手机端编码 API 冒烟
+      # ---------- 实现 2：网页 + 编码服务 ----------
+      - name: 编码服务 API 冒烟
         run: |
-          python phone/serve.py --port 8123 &
+          python apps/web-server/serve.py --port 8123 &
           sleep 3
-          curl -s http://127.0.0.1:8123/api/health
-          curl -s -X POST http://127.0.0.1:8123/api/encode \
+          curl -sf http://127.0.0.1:8123/api/health
+          curl -sf -X POST http://127.0.0.1:8123/api/encode \
                -H 'Content-Type: application/json' \
                -d '{"kind":"text","text":"hello","format":"gbk"}'
-          curl -s -X POST http://127.0.0.1:8123/api/calibration \
+          curl -sf -X POST http://127.0.0.1:8123/api/calibration \
                -H 'Content-Type: application/json' -d '{"format":"bmp"}'
+          curl -sf -X POST http://127.0.0.1:8123/api/size-probe \
+               -H 'Content-Type: application/json' -d '{}'
+          curl -sf http://127.0.0.1:8123/vendor/ble-util.js -o /dev/null
+          curl -sf http://127.0.0.1:8123/app.js -o /dev/null
+          echo "serve.py OK"
 
-      - name: 部署前自检脚本可用
-        run: python phone/doctor.py --port 8199
+      - name: 部署前自检脚本
+        run: python apps/web-server/doctor.py --port 8199
+
+      # ---------- 实现 3：打印服务 ----------
+      - name: 打印服务（逻辑 + HTTP）
+        run: python tests/test_print_server.py
+
+      - name: 打印服务端到端（fake 后端 + 命令行客户端）
+        run: |
+          python apps/print-server/server.py --backend fake --port 8101 &
+          sleep 3
+          curl -sf http://127.0.0.1:8101/health
+          python apps/print-server/client.py --url http://127.0.0.1:8101 text "hello"
+          python apps/print-server/client.py --url http://127.0.0.1:8101 status
+          echo "print-server OK"
+
+      # ---------- 打包 ----------
+      - name: 三个实现都能打包
+        run: |
+          python tools/make_bundle.py --target web-server
+          python tools/make_bundle.py --target print-server
+          python tools/make_bundle.py --target static-web
+          ls -lh dist/

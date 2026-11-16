@@ -1,11 +1,14 @@
-# 部署文档（手机端）
+# 实现 2：网页客户端 + Python 编码服务
 
+> **这是三个实现中的第 2 个**：网页（浏览器）负责蓝牙，Python 负责编码。
+> 适用场景：手机随身用、不想 root。
+>
 > 适用范围：**已经装好 Termux + proot-distro + Ubuntu，且能 `proot-distro login ubuntu` 进系统**。
 > 本文从"拿到代码"开始，一步一步写到"稳定后台运行、能打印"。
 > 装 Termux / Ubuntu 的步骤不再重复。
 >
-> 相关文档：原理与协议见 [`协议说明.md`](协议说明.md)，为什么用 Web Bluetooth 见
-> [`手机端WebBluetooth.md`](手机端WebBluetooth.md)。
+> 相关文档：原理与协议见 [`../../docs/协议说明.md`](../../docs/协议说明.md)，为什么用 Web Bluetooth 见
+> [`../../docs/手机端WebBluetooth.md`](../../docs/手机端WebBluetooth.md)。
 
 ---
 
@@ -22,10 +25,10 @@ cd ~ && git clone <你的仓库> memobird-pocket-printer && cd memobird-pocket-p
 apt update && apt install -y python3 python3-pil fonts-noto-cjk
 
 # ④ 自检（全 OK 再往下）
-python3 phone/doctor.py
+python3 apps/web-server/doctor.py
 
 # ⑤ 起服务
-bash phone/start.sh            # 后台常驻，日志 server.log
+bash apps/web-server/start.sh            # 后台常驻，日志 server.log
 
 # ⑥ 手机 Chrome 打开
 #    http://127.0.0.1:8000
@@ -35,14 +38,14 @@ bash phone/start.sh            # 后台常驻，日志 server.log
 
 ---
 
-## 1. 部署前自检：`phone/doctor.py`
+## 1. 部署前自检：`apps/web-server/doctor.py`
 
 别急着起服务，先跑这一个是**性价比最高的一步** —— 它能提前把 90% 的部署问题揪出来：
 
 ```bash
 cd ~/memobird-pocket-printer
-python3 phone/doctor.py            # 默认检查 8000 端口
-python3 phone/doctor.py --port 8080
+python3 apps/web-server/doctor.py            # 默认检查 8000 端口
+python3 apps/web-server/doctor.py --port 8080
 ```
 
 正常输出（每项含义见下表）：
@@ -61,7 +64,7 @@ python3 phone/doctor.py --port 8080
  [OK  ] 编码冒烟         文本 1 帧 / 位图 3 帧（384×47）
 --------------------------------------------------------------
  通过。下一步：
-   python3 phone/serve.py --port 8000
+   python3 apps/web-server/serve.py --port 8000
    手机 Chrome 打开 http://127.0.0.1:8000
 ```
 
@@ -71,8 +74,8 @@ python3 phone/doctor.py --port 8080
 | Pillow | 没装 → `apt install -y python3-pil`；apt 装不上就 `pip3 install pillow` |
 | Pillow 绘制 | 库损坏或架构不匹配 → 重装 Pillow |
 | 中文字体（WARN） | 中文会打成方块 → `apt install -y fonts-noto-cjk` |
-| 目录完整性 | 解压不全 / 在错误目录 → 重解压，确认 `web/index.html` 在 |
-| 端口占用（WARN） | 上次没退干净 → `bash phone/stop.sh`，或换个端口 |
+| 目录完整性 | 解压不全 / 在错误目录 → 重解压，确认 `apps/web-server/index.html` 在 |
+| 端口占用（WARN） | 上次没退干净 → `bash apps/web-server/stop.sh`，或换个端口 |
 | 回环监听 | 极少见，proot 网络异常 → 重启 Termux |
 | 编码冒烟 | 代码有问题 → 把报错原文发出来 |
 
@@ -104,17 +107,17 @@ cd memobird-pocket-printer
 
 ```powershell
 cd <项目目录>
-python tools/make_phone_zip.py          # 生成 memobird_phone.zip
+python tools/make_bundle.py --target web-server   # 生成 dist/memobird-web-server.zip
 python -m http.server 9000              # 临时 HTTP 服务
 ```
 
-手机浏览器打开 `http://<电脑IP>:9000/memobird_phone.zip` 下载，然后在 Ubuntu 里：
+手机浏览器打开 `http://<电脑IP>:9000/dist/memobird-web-server.zip` 下载，然后在 Ubuntu 里：
 
 ```bash
 mkdir -p ~/memobird-pocket-printer && cd ~/memobird-pocket-printer
 apt install -y unzip        # 极简镜像里可能没有
 # zip 放在 /sdcard/Download/ 里，proot 里可直接读（Termux 已授权存储时）
-unzip /sdcard/Download/memobird_phone.zip
+unzip /sdcard/Download/dist/memobird-web-server.zip
 ```
 
 ### 2.3 adb push
@@ -132,11 +135,11 @@ cp -r /sdcard/<项目目录名> ~/memobird-pocket-printer
 ```bash
 # 在 Termux（不是 Ubuntu）里
 termux-setup-storage
-cp -r ~/storage/downloads/memobird_phone.zip ~/
-proot-distro login ubuntu -- bash -lc 'cd ~ && unzip -o ~/memobird_phone.zip'
+cp -r ~/storage/downloads/dist/memobird-web-server.zip ~/
+proot-distro login ubuntu -- bash -lc 'cd ~ && unzip -o ~/dist/memobird-web-server.zip'
 ```
 
-> 装完确认三件东西在：`memobird_printer/`、`web/`、`phone/`。少一个就重来。
+> 装完确认两类目录在：`memobird_printer/`（共用库）和 `apps/web-server/`（本实现，含 `vendor/`）。少一个就重来。
 
 ---
 
@@ -193,7 +196,7 @@ python3 -c "import PIL, sys; print(sys.version.split()[0], PIL.__version__)"
 
 ```bash
 cd ~/memobird-pocket-printer
-python3 phone/serve.py
+python3 apps/web-server/serve.py
 ```
 
 ```
@@ -207,8 +210,8 @@ memobird phone server 1.1.0
 ### 4.2 后台常驻（日常用这个）
 
 ```bash
-bash phone/start.sh          # 写 server.pid，日志追加到 server.log
-bash phone/stop.sh           # 停止
+bash apps/web-server/start.sh          # 写 server.pid，日志追加到 server.log
+bash apps/web-server/stop.sh           # 停止
 tail -f server.log           # 看日志
 ```
 
@@ -221,7 +224,7 @@ tail -f server.log           # 看日志
 | `--port` | `8000` | 换端口用；端口被占时 `doctor.py` 会提醒 |
 | `--host` | `127.0.0.1` | **保持默认**。改成 `0.0.0.0` 只能用局域网 IP 访问，而那不是安全上下文，Web Bluetooth 会直接不存在 |
 
-环境变量方式也行：`PORT=8080 bash phone/start.sh`。
+环境变量方式也行：`PORT=8080 bash apps/web-server/start.sh`。
 
 ### 4.4 为什么必须是 `127.0.0.1`
 
@@ -251,7 +254,7 @@ termux-wake-lock
 
 ```bash
 proot-distro login ubuntu                        # ① 进 Ubuntu
-cd ~/memobird-pocket-printer && bash phone/start.sh   # ② 起服务
+cd ~/memobird-pocket-printer && bash apps/web-server/start.sh   # ② 起服务
 ```
 
 ### 5.3 开机自启（可选，需要 Termux:Boot）
@@ -264,7 +267,7 @@ mkdir -p ~/.termux/boot
 cat > ~/.termux/boot/start-memobird.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/sh
 termux-wake-lock
-proot-distro login ubuntu -- bash -lc 'cd ~/memobird-pocket-printer && bash phone/start.sh'
+proot-distro login ubuntu -- bash -lc 'cd ~/memobird-pocket-printer && bash apps/web-server/start.sh'
 EOF
 chmod +x ~/.termux/boot/start-memobird.sh
 ```
@@ -395,16 +398,16 @@ tail -n 50 server.log          # 最近日志
 
 ```bash
 curl -s http://127.0.0.1:8000/api/health      # 期望 {"ok": true, ...}
-bash phone/stop.sh && bash phone/start.sh     # 重启
+bash apps/web-server/stop.sh && bash apps/web-server/start.sh     # 重启
 ss -ltnp 2>/dev/null | grep 8000              # 看端口在不在监听
 ```
 
 | 现象 | 原因 | 修法 |
 |---|---|---|
-| 拒绝连接 | 服务没起 | `bash phone/start.sh`，看 `server.log` |
+| 拒绝连接 | 服务没起 | `bash apps/web-server/start.sh`，看 `server.log` |
 | 服务起了但页面 404 | 不在项目根目录启动 | `cd ~/memobird-pocket-printer` 再起 |
 | 页面能开、底部显示 `PIL 缺失` | 缺 Pillow | `apt install -y python3-pil` |
-| 页面一片白 | `web/` 没解压全 | 重解压，确认 `web/app.js` 存在 |
+| 页面一片白 | `apps/web-server/` 没解压全 | 重解压，确认 `apps/web-server/app.js` 存在 |
 
 ### 9.2 编码层：点了打印没反应 / 报 500
 
@@ -471,13 +474,13 @@ service 0000180a-...
 ```bash
 # 升级（git 方式）
 cd ~/memobird-pocket-printer
-bash phone/stop.sh
+bash apps/web-server/stop.sh
 git pull
-bash phone/start.sh
+bash apps/web-server/start.sh
 
 # 升级（zip 方式）：重新解压覆盖，注意先停服务
 # 重置：清掉运行态
-bash phone/stop.sh && rm -f server.pid server.log
+bash apps/web-server/stop.sh && rm -f server.pid server.log
 
 # 卸载：直接删目录；没有系统级安装痕迹、没有后台服务注册
 rm -rf ~/memobird-pocket-printer
@@ -497,56 +500,11 @@ rm -rf ~/memobird-pocket-printer
 
 ---
 
-## 12. 另一种跑法：纯静态页（不开服务端）
+## 12. 想要“不开服务端”的版本？
 
-如果不想在手机上跑 Python（或者想把页面分享给别人），可以把 `web/` 打成**单文件静态页**，
-挂到 GitHub Pages 或任何 https 托管上，手机 Chrome 直接开 URL 就能打印。
-
-### 12.1 构建
-
-```bash
-python tools/build_static.py          # → docs/index.html（约 120 KB，gzip 64 KB）
-```
-
-产物是自包含的：CSS、encoder.js、render.js、GBK 码表、app.js 全部内联，**没有任何外链**。
-
-### 12.2 启用 Pages（点三下）
-
-仓库 → **Settings** → **Pages** → Source 选 *Deploy from a branch*
-→ Branch 选 `main`，目录选 **`/docs`** → **Save**。
-
-等一分钟，访问 `https://<你的用户名>.github.io/<仓库名>/`。
-
-### 12.3 它怎么知道该用哪种模式
-
-页面启动时先探一下 `/api/health`（2.5 秒超时）：
-
-* 通了 → **服务端模式**，编码交给 Python
-* 不通 → **浏览器模式**，用 `encoder.js` 本地编码，并自动加载 GBK 码表
-
-页脚会写清楚当前是哪一种：`编码：Python 服务端 v1.1.0` 或 `编码：浏览器本地（纯静态）`。
-两种模式下动作、按钮、日志完全一样。
-
-### 12.4 差别在哪
-
-| 项 | 服务端模式（serve.py） | 纯静态模式（Pages） |
-|---|---|---|
-| 文字渲染 | Pillow + 系统字体 | canvas + 系统字体 |
-| 抖动算法 | Python 浮点实现 | `encoder.js`，**与 Python 逐字节等价**（有测试） |
-| 文字帧 | GBK（1–4 次写） | GBK（内嵌码表，同样 1–4 次写） |
-| 图片缩放 | Pillow LANCZOS（细节更好） | canvas 高质量缩放（够用） |
-| 依赖 | `python3-pil` | 无 |
-| 离线 | ✅ 完全离线 | ❌ 首次加载要联网（打印内容不外发） |
-| 换设备 | 只在本机 127.0.0.1 | 同一 URL 谁都能用 |
-
-### 12.5 怎么选
-
-* **手机上日常用** → 服务端模式（图片质量最好、完全离线）
-* **想发给别人 / 多设备用 / 不想装 Termux** → 纯静态模式
-* 两者可以**同时存在**：同一份代码，Pages 站点和本地 `serve.py` 互不干扰
-
-> 纯静态模式同样要求安全上下文，所以 **必须 https**（Pages 就是 https）或 localhost。
-> 用 `file://` 直接双击打开不行 —— Web Bluetooth 在 `null` origin 上会被拒。
+本项目有三个互相独立的实现。纯静态（零后端、可挂 GitHub Pages）那套是
+**实现 1**，见 [`../static-web/README.md`](../static-web/README.md)。
+本文只讲实现 2（网页客户端 + Python 编码服务）。
 
 ---
 
@@ -614,18 +572,20 @@ python tools/build_static.py          # → docs/index.html（约 120 KB，gzip 
 
 ---
 
-## 附录 C：手机端需要哪些文件
+## 附录 C：这个实现需要哪些文件
 
 ```
 memobird-pocket-printer/
-├── memobird_printer/        ← 编码引擎（必需）
-├── web/                     ← 页面（必需）
-├── phone/
-│   ├── serve.py             ← 服务（必需）
-│   ├── doctor.py            ← 自检
-│   ├── start.sh / stop.sh   ← 后台常驻
-├── docs/                    ← 文档（可不带）
-└── README.md, requirements.txt, LICENSE
+├── memobird_printer/            ← 共用库：编码引擎（必需）
+└── apps/web-server/             ← 本实现（必需）
+    ├── serve.py                 ← HTTP 服务 + 编码 API
+    ├── index.html / app.js      ← 页面
+    ├── vendor/                  ← 共享前端（ble-util / ble-link / ui / style）
+    ├── doctor.py                ← 部署前自检
+    └── start.sh / stop.sh / run.sh
 ```
 
-只要前三项就能跑；`python3 phone/doctor.py` 会替你确认它们齐不齐。
+`docs/`、`requirements.txt`、`LICENSE` 可选。第三方库只要 `pillow`；
+编码在服务端，**不需要**编译器、GBK 码表或 Node。
+
+只要这两项目录就能跑；`python3 apps/web-server/doctor.py` 会替你确认它们齐不齐。

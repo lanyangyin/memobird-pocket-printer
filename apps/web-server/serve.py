@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """
-phone/serve.py — 手机端（Termux proot Ubuntu）本地服务
+apps/web-server/serve.py — 实现 2：网页客户端 + Python 编码服务
 
-作用：把 Python 这套编码引擎（文字渲染 / 抖动 / BMP / 蓝牙帧）包成一个本地 HTTP 服务，
-      手机浏览器打开 http://127.0.0.1:8000 后，用 **Web Bluetooth** 直接把帧写进打印机。
-      这样 Termux 里完全不需要 BlueZ / root：蓝牙部分由 Chrome 的 GATT 完成。
+职责边界（和静态版、打印服务严格分开）：
+  · 本进程**只做编码**（文字渲染 / 抖动 / BMP / 封 AA 帧），不连接任何蓝牙设备
+  · 蓝牙由浏览器（Web Bluetooth）持有，页面调本服务的 /api/* 拿帧
+  · 只监听 127.0.0.1：Web Bluetooth 要求安全上下文，页面必须从 localhost 打开
 
 启动：
-    python3 phone/serve.py            # 默认 127.0.0.1:8000
-    python3 phone/serve.py --port 8080 --host 0.0.0.0
+    python3 apps/web-server/serve.py            # 默认 127.0.0.1:8000
+    python3 apps/web-server/serve.py --port 8080
 
 接口：
-    GET  /                      网页
-    GET  /api/health            {ok, pil, version}
-    POST /api/preview           返回抖动后的 PNG（所见即所得）
-    POST /api/encode            返回 {"frames": [b64...], "meta": {...}}
-
-    POST body 形如：
-        {"kind":"text",  "text":"你好", "fontSize":24, "mode":"threshold", "format":"gbk"|"image"}
-        {"kind":"image", "dataUrl":"data:image/png;base64,...", "mode":"floyd", "format":"bmp"|"raw", "vflip":false}
+    GET  /                    页面（本目录 index.html + vendor/*）
+    GET  /api/health          {ok, version, pil, width}
+    POST /api/preview         返回抖动后的 PNG（所见即所得）
+    POST /api/encode          返回 {"frames": [b64...], "meta": {...}}
+    POST /api/calibration     校准图
+    POST /api/size-probe      字号档位测试（四行 tier=0..3 + 一行位图对照）
 """
 from __future__ import annotations
 
@@ -27,21 +26,27 @@ import base64
 import json
 import os
 import sys
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
 
 from memobird_printer import packet                      # noqa: E402
 from memobird_printer.image import (                     # noqa: E402
-    dither_to_raw, prepare, raw_to_bmp, preview,
+    dither_to_raw, prepare, raw_to_bmp,
 )
 
-WEB_DIR = os.path.join(ROOT, "web")
-VERSION = "1.1.0"
+WEB_DIR = HERE
+VERSION = "2.0.0"
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -255,7 +260,7 @@ def encode(req: dict) -> dict:
 
 # --------------------------------------------------------------------------- #
 class Handler(BaseHTTPRequestHandler):
-    server_version = f"memobird-phone/{VERSION}"
+    server_version = f"memobird-web-server/{VERSION}"
 
     def log_message(self, fmt, *args):           # 安静点，只留错误
         if args and str(args[0]).startswith(("4", "5")):

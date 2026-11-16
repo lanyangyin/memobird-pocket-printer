@@ -1,6 +1,6 @@
 # 手机端方案：Termux(proot Ubuntu) + Chrome Web Bluetooth
 
-> **要动手部署请直接看 [`部署文档.md`](部署文档.md)** —— 那份是逐步操作 + 排错手册。
+> **要动手部署请直接看 [`../apps/web-server/README.md`](../apps/web-server/README.md)** —— 那份是逐步操作 + 排错手册。
 > 本文讲的是**为什么这么设计**：传输层选型、协议形态、以及各环节的取舍。
 
 目标：**手机上跑 Python、开个网页，用网页控制蓝牙打印机**。不需要 root，不需要 BlueZ，
@@ -31,7 +31,7 @@
 
 | | 服务端模式 | 纯静态模式 |
 |---|---|---|
-| 页面来源 | `phone/serve.py`（127.0.0.1） | 任意 https 托管（GitHub Pages） |
+| 页面来源 | `apps/web-server/serve.py`（127.0.0.1） | 任意 https 托管（GitHub Pages） |
 | 文字渲染 | Pillow + 系统字体 | canvas + 系统字体 |
 | 抖动 | Python 浮点实现 | `encoder.js`（与 Python 逐字节等价，有测试） |
 | GBK | Python 内置 codec | 内嵌码表 `gbk.js`（21791 码位，79 KB） |
@@ -60,8 +60,8 @@ apt update && apt install -y python3 python3-pil
 ```bash
 # A. 手机能上网且你有仓库：直接 git clone 你自己的仓库
 # B. 电脑起个临时服务，手机上用浏览器下载 zip（最简单）
-#    电脑: python tools/make_phone_zip.py && python -m http.server 9000
-#    手机: 浏览器打开 http://<电脑IP>:9000/ 下载 memobird_phone.zip 后解压
+#    电脑: python tools/make_bundle.py --target web-server && python -m http.server 9000
+#    手机: 浏览器打开 http://<电脑IP>:9000/ 下载 dist/memobird-web-server.zip 后解压
 # C. adb push（开着 USB 调试）
 #    adb push <项目目录> /sdcard/
 #    然后 cp -r /sdcard/<项目目录名> ~
@@ -71,7 +71,7 @@ apt update && apt install -y python3 python3-pil
 
 ```bash
 cd ~/memobird-pocket-printer
-python3 phone/serve.py            # 或 bash phone/run.sh
+python3 apps/web-server/serve.py            # 或 bash apps/web-server/run.sh
 ```
 
 看到 `打开： http://127.0.0.1:8000` 后，在**手机 Chrome** 打开这个地址。
@@ -114,6 +114,6 @@ python3 phone/serve.py            # 或 bash phone/run.sh
 
 ## 8. 换机型要改什么
 
-* GATT 特征值：`web/app.js` 顶部 `CHR_WRITE` / `CHR_NOTIFY`，或调试页手填
+* GATT 特征值：`apps/web-server/app.js` 顶部 `CHR_WRITE` / `CHR_NOTIFY`，或调试页手填
 * 帧格式：`memobird_printer/packet.py`（`build_frame` / TLV tag 表）
 * 局域网机型：根本不需要这个网页，直接用 `python -m memobird_printer text ... --lan <ip>`

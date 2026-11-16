@@ -10,7 +10,7 @@
 'use strict';
 
 const path = require('path');
-const ble = require(path.join(path.resolve(__dirname, '..'), 'web', 'ble-util.js'));
+const ble = require(path.join(path.resolve(__dirname, '..'), 'shared', 'web', 'ble-util.js'));
 
 let pass = 0;
 const fails = [];

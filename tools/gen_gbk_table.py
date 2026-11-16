@@ -21,10 +21,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "web", "gbk.js")
+OUT = os.path.join(ROOT, "shared", "web", "gbk.js")
 
 B1_START, B1_END = 0x81, 0xFE
 B2_START, B2_END = 0x40, 0xFE

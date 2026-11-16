@@ -47,13 +47,15 @@ class BlePrinter:
     backend = "ble"
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
-                 settle: float = 0.02, timeout: float = 15.0):
+                 settle: float = 0.02, timeout: float = 15.0, echo: bool = True):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
         self.settle = settle
         self.timeout = timeout
+        self.echo = echo
         self._client = None
+        self._notifies: list[bytes] = []
 
     # ------------------------------------------------------------------ #
     async def __aenter__(self):
@@ -61,6 +63,7 @@ class BlePrinter:
 
         self._client = BleakClient(self.address, timeout=self.timeout)
         await self._client.connect()
+        self._notifies.clear()
         try:
             await self._client.start_notify(self.notify_uuid, self._on_notify)
         except Exception:  # notify 不是所有固件都必填
@@ -76,7 +79,10 @@ class BlePrinter:
             await self._client.disconnect()
 
     def _on_notify(self, _sender, data: bytearray) -> None:
-        print(f"[notify] {bytes(data).hex(' ')}")
+        payload = bytes(data)
+        self._notifies.append(payload)
+        if self.echo:
+            print(f"[notify] {payload.hex(' ')}")
 
     # ------------------------------------------------------------------ #
     async def write(self, data: bytes) -> None:
@@ -108,6 +114,29 @@ class BlePrinter:
         await self.write(packet.status_request())
         await asyncio.sleep(0.5)
         return b""
+
+    async def transact(self, frame: bytes, wait: float = 1.2) -> list[bytes]:
+        """发一帧并收集 wait 秒内的通知回包（读设备信息/试探命令用）。"""
+        start = len(self._notifies)
+        await self.write(frame)
+        await asyncio.sleep(wait)
+        return self._notifies[start:]
+
+    async def read_device_info(self, wait: float = 1.2):
+        """cmd 0x01 → 解析成 DeviceInfo（见 device.py）"""
+        from . import device
+
+        frames = await self.transact(device.status_frame(), wait=wait)
+        infos = [i for i in (device.parse_status(f) for f in frames) if i]
+        return infos, frames
+
+    async def sweep(self, cmds: range | list[int], wait: float = 0.8) -> dict[int, list[bytes]]:
+        """逐个发空命令，返回 {cmd: [回包]}。只发无 payload 的命令，不会改配置。"""
+        out: dict[int, list[bytes]] = {}
+        for cmd in (cmds if isinstance(cmds, list) else list(cmds)):
+            out[cmd] = await self.transact(packet.build_frame(cmd), wait=wait)
+            await asyncio.sleep(0.2)
+        return out
 
     async def print_text(self, text: str, *, encoding: str = "gbk") -> None:
         if not text.endswith("\n"):

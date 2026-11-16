@@ -31,6 +31,9 @@ jobs:
       - name: 离线协议断言
         run: python tests/test_protocol.py
 
+      - name: 设备信息解析（用实机回包做样例）
+        run: python tests/test_device.py
+
       # ---------- 生成物一致性 ----------
       - name: 夹具与 GBK 码表可重现
         run: |

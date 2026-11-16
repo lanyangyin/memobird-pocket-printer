@@ -224,6 +224,54 @@ def cmd_print(args) -> int:
     return 1
 
 
+def cmd_info(args) -> int:
+    """读设备信息（cmd 0x01）：电量/序列号/各状态字"""
+    if not args.ble:
+        print("需要 --ble <地址>", file=sys.stderr)
+        return 1
+    from .ble import BlePrinter
+    from . import device
+
+    async def run():
+        async with BlePrinter(args.ble, echo=False) as b:
+            return await b.read_device_info(wait=args.wait)
+
+    infos, frames = asyncio.run(run())
+    if not frames:
+        print("设备没有回包（可能被别的 App/浏览器占着，或者固件不支持）", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps([i.as_dict() for i in infos], ensure_ascii=False, indent=2))
+    else:
+        for line in device.decode_text(frames):
+            print(line)
+    return 0
+
+
+def cmd_sweep(args) -> int:
+    """逐个命令试探：只发无 payload 的空命令，不会改配置"""
+    if not args.ble:
+        print("需要 --ble <地址>", file=sys.stderr)
+        return 1
+    from .ble import BlePrinter
+
+    cmds = list(range(args.start, args.end + 1))
+
+    async def run():
+        async with BlePrinter(args.ble, echo=False) as b:
+            return await b.sweep(cmds, wait=args.wait)
+
+    out = asyncio.run(run())
+    for cmdi, frames in out.items():
+        if frames:
+            print(f"cmd=0x{cmdi:02x}  回包 {len(frames)} 条:")
+            for f in frames:
+                print(f"  {f.hex(' ')}")
+        else:
+            print(f"cmd=0x{cmdi:02x}  无回包")
+    return 0
+
+
 def cmd_cloud_bind(args) -> int:
     from .cloud import CloudPrinter
 
@@ -275,6 +323,19 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("lan-scan")
     s.add_argument("--subnet", help="例如 192.168.1")
     s.set_defaults(func=cmd_lan_scan)
+
+    s = sub.add_parser("info", help="读设备信息（序列号/状态字，cmd 0x01）")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--wait", type=float, default=1.5, help="等回包时长")
+    s.add_argument("--json", action="store_true", help="输出 JSON")
+    s.set_defaults(func=cmd_info)
+
+    s = sub.add_parser("sweep", help="逐个命令试探（只发空命令，不改配置）")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--start", type=lambda v: int(v, 0), default=1)
+    s.add_argument("--end", type=lambda v: int(v, 0), default=8)
+    s.add_argument("--wait", type=float, default=0.8)
+    s.set_defaults(func=cmd_sweep)
 
     s = sub.add_parser("cloud-bind")
     s.add_argument("--ak", required=True)

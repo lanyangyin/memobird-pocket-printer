@@ -40,3 +40,4 @@ dist/
 charge.csv
 warm.csv
 *.charge.csv
+*_watch.csv

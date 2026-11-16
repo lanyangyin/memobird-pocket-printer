@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-tools/_sleep_test.py — 验证 tag 0x02 是不是"自动关机/休眠时间（分钟）"
+tools/experiments/sleep_test.py — 验证 tag 0x02 是不是"自动关机/休眠时间（分钟）"
 
 做法：把 0x02 设成 1 → 静置 80 秒（不发任何 BLE 数据，避免把它"叫醒"）
      → 再试读状态：
         读得到 = 没睡（0x02 不是自动关机，或计时被连接本身重置）
         读不到/连接断 = 基本确认 0x02 = 自动关机分钟数
 
-    python tools/_sleep_test.py <地址> [--minutes 1] [--idle 80] [--restore 10]
+    python tools/experiments/sleep_test.py <地址> [--minutes 1] [--idle 80] [--restore 10]
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
 from memobird_printer import packet           # noqa: E402

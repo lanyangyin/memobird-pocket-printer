@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-tools/_tag_map.py — 试探 cmd 0x03 的设置项 tag 映射（写 → 读状态 → 看哪项变了 → 还原）
+tools/experiments/tag_map.py — 试探 cmd 0x03 的设置项 tag 映射（写 → 读状态 → 看哪项变了 → 还原）
 
-    python tools/_tag_map.py 00:15:83:E4:7A:F2 --tag 0x02 --value 5 --restore 10
+    python tools/experiments/tag_map.py 00:15:83:E4:7A:F2 --tag 0x02 --value 5 --restore 10
 
 策略：写一个 tag，然后读状态，对比「哪个状态字段变了」——变了就说明这个 tag
 既是设置项、也能在状态里读到。最后写回原值。
@@ -20,7 +20,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
 from memobird_printer import packet          # noqa: E402

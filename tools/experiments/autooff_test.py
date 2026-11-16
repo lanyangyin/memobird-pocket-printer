@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-tools/_autooff_test.py — 严格验证 tag 0x02 是不是"自动关机时间（分钟）"
+tools/experiments/autooff_test.py — 严格验证 tag 0x02 是不是"自动关机时间（分钟）"
 
 上次用"连接保持 + 静置"测不出结果：很多设备只要 BLE 连着就不计时。
 这次改成：设 0x02=1 → **主动断开** → 等 100 秒 → 扫描看它还广播不广播。
 
-    python tools/_autooff_test.py <地址> --minutes 1 --idle 100 --restore 10
+    python tools/experiments/autooff_test.py <地址> --minutes 1 --idle 100 --restore 10
 
 结果解读：
   · 扫不到设备 → 已自动关机 ⇒ 0x02 就是自动关机时间（此时按键唤醒，再跑 --restore-only 还原）
@@ -24,7 +24,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
 from memobird_printer import device           # noqa: E402
@@ -77,7 +77,7 @@ async def main(args) -> int:
     else:
         print("\n结论：扫不到 → 大概率已自动关机，0x02 ≈ 自动关机时间（分钟）")
         print("请按一下打印机按键唤醒它，然后运行：")
-        print(f"  python tools/_autooff_test.py {args.address} --restore-only")
+        print(f"  python tools/experiments/autooff_test.py {args.address} --restore-only")
     return 0
 
 

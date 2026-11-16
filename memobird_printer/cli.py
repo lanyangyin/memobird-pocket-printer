@@ -54,8 +54,18 @@ def _make_image(args):
 
         src = Image.open(_image_path(args))
     else:
-        src = args.text or ""
+        src = getattr(args, "text", None) or ""
     img = prepare(src, mode=args.mode, font_size=args.font_size, font=args.font, invert=args.invert)
+
+    # 整张纸正好 N 毫米：给内容补白（或裁切）到目标高度
+    target_mm = getattr(args, "length_mm", None)
+    if target_mm:
+        from .paper import pad_to_length
+
+        before = img.size[1]
+        img = pad_to_length(img, float(target_mm), align=getattr(args, "align", "top"))
+        print(f"整页高度：{before} 点 → {img.size[1]} 点（{target_mm}mm @203dpi）")
+
     return dither_to_raw(img, args.mode)
 
 
@@ -390,6 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--font-size", type=int, default=24)
         p.add_argument("--scale", type=int, default=2)
         p.add_argument("--invert", action="store_true")
+        p.add_argument("--length-mm", type=float,
+                       help="整张纸正好 N 毫米（内容补白/裁切到该高度）")
+        p.add_argument("--align", default="top", choices=["top", "center", "bottom"],
+                       help="补白时内容放哪（默认 top）")
         return p
 
     # preview / text：位置参数是文本

@@ -112,6 +112,13 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
             raise ValueError("image 为空")
         img = prepare(_load_image(data), mode=mode)
 
+    target_mm = req.get("lengthMm")
+    if target_mm:
+        from memobird_printer.paper import pad_to_length
+
+        img = pad_to_length(img, float(target_mm), dpi=int(req.get("dpi") or 203),
+                            align=req.get("align") or "top")
+
     w, h, raw = dither_to_raw(img, mode, darken=darken)
     if req.get("invert"):
         # 反色在 prepare 里已经做过灰度处理，这里只兜底处理显式 invert

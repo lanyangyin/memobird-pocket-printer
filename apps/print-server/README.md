@@ -111,6 +111,7 @@ POST /print  {"text": "hi", "checkPaper": true}
   "bold": false, "underline": false,
   "mode": "threshold",             // floyd | atkinson | bayer | threshold
   "feed": true,                    // 打后走纸（默认 true）
+  "lengthMm": 60,                  // 整张纸正好 60mm（补白/裁切内容高度）
   "vflip": false, "preheat": true
 }
 ```

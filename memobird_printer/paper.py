@@ -57,3 +57,35 @@ def line_frames(lines: int = 3) -> tuple[list[bytes], dict]:
     job = packet.feed_job(n)
     return list(job.frames), {"kind": "feed-lines", "lines": n, "chunks": job.chunks,
                               "bytes": job.total_bytes, "preheat": packet.PREHEAT}
+
+
+# --------------------------------------------------------------------------- #
+# 让整张纸正好 N 毫米：给内容补白 / 裁切到目标高度
+# --------------------------------------------------------------------------- #
+def pad_to_length(img, mm: float, *, dpi: int = 203, align: str = "top"):
+    """
+    把灰度图补白（或裁切）到正好 `mm` 毫米高。
+
+    出纸总长 = 位图高度，所以这是"整张纸正好 N mm"的唯一可靠做法
+    （走纸是额外再送，不能保证内容本身占多长）。
+
+    align: top / center / bottom —— 内容放在目标高度的哪个位置。
+    """
+    from PIL import Image
+
+    target = mm_to_dots(mm, dpi)
+    w, h = img.size
+    if h == target:
+        return img
+    if h > target:
+        return img.crop((0, 0, w, target))
+
+    canvas = Image.new("L", (w, target), 255)
+    if align == "bottom":
+        y = target - h
+    elif align == "center":
+        y = (target - h) // 2
+    else:
+        y = 0
+    canvas.paste(img, (0, y))
+    return canvas

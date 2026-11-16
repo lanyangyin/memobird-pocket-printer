@@ -186,6 +186,14 @@ def _render(req: dict):
             font_size=int(req.get("fontSize") or 24),
             invert=invert,
         )
+    # 整张纸正好 N 毫米（内容补白/裁切）
+    target_mm = req.get("lengthMm")
+    if target_mm:
+        from memobird_printer.paper import pad_to_length
+
+        img = pad_to_length(img, float(target_mm), dpi=int(req.get("dpi") or 203),
+                            align=req.get("align") or "top")
+
     return dither_to_raw(img, mode, darken=darken)
 
 

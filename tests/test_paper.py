@@ -75,6 +75,21 @@ check("3 行 = 1 帧", len(lf) == 1, str(len(lf)))
 check("3 行 3 字节", lm["bytes"] == 3, str(lm["bytes"]))
 check("帧里是 3 个换行", packet.parse_frame(lf[0]) is not None)
 
+print("\n6) 整页长度（内容补白到 N 毫米）")
+from memobird_printer.image import prepare          # noqa: E402
+
+img = prepare("测试")
+base_h = img.size[1]
+for mm, want in ((30, 240), (60, 480), (100, 800)):
+    out = paper.pad_to_length(img, mm)
+    check(f"{mm}mm → {want} 点", out.size[1] == want, f"{out.size[1]} 点")
+    check(f"{mm}mm 宽度不变", out.size[0] == 384, str(out.size[0]))
+trimmed = paper.pad_to_length(img, 5)
+check("内容比目标高时裁切", trimmed.size[1] == 40, str(trimmed.size[1]))
+check("裁切后宽度不变", trimmed.size[0] == 384)
+bottom = paper.pad_to_length(img, 60, align="bottom")
+check("bottom 对齐仍是 480 点", bottom.size[1] == 480)
+
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

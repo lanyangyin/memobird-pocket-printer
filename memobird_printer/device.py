@@ -72,8 +72,9 @@ TAGS: dict[int, Tag] = {
               "写 1 亮 / 0 灭，状态同步 —— 因果已用肉眼验证"),
     0x04: Tag("voltage_step", "电压类读数（0.05V/LSB?）", "sensor", False,
               "会随负载变：打黑页 81→80，之后自己回来；写入无效"),
-    0x05: Tag("flag_05", "状态位", "sensor", False, "恒为 1"),
-    0x06: Tag("flag_06", "状态位", "sensor", False, "恒为 0"),
+    0x05: Tag("flag_05", "状态位", "sensor", False, "恒为 1（未观察到变化）"),
+    0x06: Tag("paper_out", "缺纸", "sensor", False,
+              "实测：有纸=0，抽出纸=1（灯同时变红）；插回纸应回 0"),
     0x0F: Tag("serial", "序列号", "info", True, "32 字节 ASCII，尾随 \\0"),
     0x13: Tag("flags_13", "标志位", "flag", False, "0xF0 = 1111 0000"),
     0x14: Tag("counter_14", "8 字节计数?", "sensor", False,
@@ -130,6 +131,17 @@ def parse_status(frame: bytes) -> DeviceInfo | None:
     if sn and all(32 <= b < 127 or b == 0 for b in sn):
         info.serial = sn.decode("ascii", "replace").rstrip("\x00") or None
     return info
+
+
+def paper_out(info: "DeviceInfo | None") -> bool | None:
+    """缺纸标志（tag 0x06）：True=缺纸，False=有纸，None=读不到。
+
+    实机验证：有纸 0，抽出热敏纸 1（同时状态灯变红）。
+    """
+    if info is None:
+        return None
+    v = info.value(0x06)
+    return None if v is None else bool(v)
 
 
 def decode_text(frames: list[bytes]) -> list[str]:

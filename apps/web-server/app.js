@@ -150,7 +150,8 @@ $('#btn-device').addEventListener('click', async () => {
     const f = infos[infos.length - 1];
     $('#dev-out').textContent = window.MBBle.formatStatus(f).join('\n');
     const pick = (tag) => { const x = f.fields.find((y) => y.tag === tag); return x ? x.int : '?'; };
-    log(`设备信息：序列号 ${f.serial || '?'} · 0x01=${pick(0x01)} · 灯=${pick(0x03)} · 0x02=${pick(0x02)}`, 'ok');
+    const noPaper = window.MBBle.paperOut(f);
+    log(`设备信息：序列号 ${f.serial || '?'} · 灯=${pick(0x03)} · 0x02=${pick(0x02)}${noPaper === null ? '' : (noPaper ? ' · ⚠ 缺纸' : ' · 有纸')}`, noPaper ? 'warn' : 'ok');
   } catch (e) { log('读设备信息失败：' + (e.message || e), 'err'); }
 });
 

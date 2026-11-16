@@ -120,6 +120,32 @@ check("指示灯 tag 标为 confirmed", device.TAGS[0x03].confirmed is True)
 check("电量/温度仍是推测", device.TAGS[0x01].confirmed is False)
 check("DeviceInfo.value() 取整数", info.value(0x01) == 23, str(info.value(0x01)))
 
+print("\n8) 缺纸标志（tag 0x06）")
+
+
+def frame_with_paper(paper: int) -> bytes:
+    payload = (
+        packet.tlv(0xFF, b"\x01")
+        + packet.tlv(0x01, bytes([23]))
+        + packet.tlv(0x02, bytes([10]))
+        + packet.tlv(0x03, bytes([1]))
+        + packet.tlv(0x04, bytes([81]))
+        + packet.tlv(0x05, bytes([1]))
+        + packet.tlv(0x06, bytes([paper]))
+        + packet.tlv(0x13, bytes([0xF0]))
+        + packet.tlv(0x0F, SN.encode())
+    )
+    return packet.build_frame(0x02, payload)
+
+
+with_paper = device.parse_status(frame_with_paper(0))
+without = device.parse_status(frame_with_paper(1))
+check("有纸 → paper_out=False", device.paper_out(with_paper) is False)
+check("缺纸 → paper_out=True", device.paper_out(without) is True)
+check("读不到 → None", device.paper_out(None) is None)
+check("TAGS 里 0x06 标成缺纸", device.TAGS[0x06].name == "paper_out", device.TAGS[0x06].name)
+check("decode_text 显示缺纸", any("缺纸" in line for line in device.decode_text([frame_with_paper(1)])))
+
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

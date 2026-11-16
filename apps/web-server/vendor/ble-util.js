@@ -125,7 +125,7 @@
     0x03: { name: 'led', label: '指示灯', confirmed: true },
     0x04: { name: 'voltage_step', label: '电压类(随负载变)', confirmed: false },
     0x05: { name: 'flag_05', label: '状态位', confirmed: false },
-    0x06: { name: 'flag_06', label: '状态位', confirmed: false },
+    0x06: { name: 'paper_out', label: '缺纸', confirmed: true },
     0x0f: { name: 'serial', label: '序列号', confirmed: true },
     0x13: { name: 'flags_13', label: '标志位', confirmed: false },
     0x14: { name: 'counter_14', label: '8 字节计数?', confirmed: false },
@@ -190,6 +190,13 @@
     return out;
   }
 
+  /** 缺纸？（tag 0x06：有纸 0 / 缺纸 1；实机验证过） */
+  function paperOut(parsed) {
+    if (!parsed) return null;
+    const f = parsed.fields.find((x) => x.tag === 0x06);
+    return f ? f.int === 1 : null;
+  }
+
   /** 状态 → 人读文本行 */
   function formatStatus(parsed) {
     if (!parsed) return ['（不是合法的设备回包）'];
@@ -225,7 +232,7 @@
     serviceCharacteristics, collectCharacteristics, pickWrite, parseFrame, dumpGatt,
     isWritable, isNotifiable,
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
-    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus,
+    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus, paperOut,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
   };
 });

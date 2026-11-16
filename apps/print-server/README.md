@@ -64,13 +64,27 @@ python apps/print-server/server.py --backend fake --port 8100 --verbose
 读打印机自身信息（仅 BLE 后端，走厂商协议 `cmd 0x01`）：
 
 ```json
-{"ok": true, "backend": "ble", "target": "00:15:83:E4:7A:F2",
+{"ok": true, "backend": "ble", "target": "00:15:83:E4:7A:F2", "paper_out": false,
  "device": {"cmd": "0x01", "serial": "636404963750000000",
-            "fields": {"0x01": {"label": "电量% / 温度℃?", "int": 23, "confirmed": false},
-                       "0x03": {"label": "指示灯", "int": 0, "confirmed": true}}}}
+            "fields": {"0x03": {"label": "指示灯", "int": 0, "confirmed": true},
+                       "0x06": {"label": "缺纸", "int": 0, "confirmed": true}}}}
 ```
 
-字段语义与"哪些已证实"见 [`../../docs/协议说明.md`](../../docs/协议说明.md) 第 1.7 节。
+`paper_out` 是缺纸标志（`0x06`：有纸 0 / 缺纸 1），实机验证过。
+
+### 缺纸预检（可选）
+
+```json
+POST /print  {"text": "hi", "checkPaper": true}
+```
+
+带 `checkPaper` 时会先读一次状态，缺纸直接返回 **409**（不会白打一页空帧）：
+
+```json
+{"ok": false, "error": "打印机缺纸（0x06=1）—— 放好纸再试"}
+```
+
+代价是每次多约 2 秒（多一次 BLE 连接 + 状态读取），所以默认不开。
 
 ### `POST /print`（也可以 `/print/text`、`/print/image`）
 

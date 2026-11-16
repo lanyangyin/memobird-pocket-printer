@@ -132,6 +132,25 @@ check("未知路径 404", code == 404)
 code, body = req("GET", "/status")
 check("GET /status 200", code == 200 and body.get("backend") == "fake")
 
+# 缺纸预检：把 paper_state 打桩成 True，checkPaper 应该 409
+orig_paper = service.paper_state
+service.paper_state = lambda: True
+try:
+    service.print_request({"text": "x", "checkPaper": True})
+    check("缺纸时 checkPaper 应拒绝", False)
+except ps.PrinterNotReady as exc:
+    check("缺纸时 checkPaper 拒绝", "缺纸" in str(exc), str(exc))
+
+code, body = req("POST", "/print", {"text": "缺纸测试", "checkPaper": True})
+check("缺纸 → HTTP 409", code == 409, str(code))
+service.paper_state = orig_paper
+
+# 不缺纸时照常
+service.paper_state = lambda: False
+code, body = req("POST", "/print", {"text": "有纸", "checkPaper": True})
+check("有纸时 checkPaper 通过", code == 200, str(code))
+service.paper_state = orig_paper
+
 # 设备信息/控灯：fake 后端应该明确拒绝（而不是假装成功）
 code, body = req("GET", "/device")
 check("GET /device 在 fake 下 400", code == 400 and body.get("ok") is False, str(code))

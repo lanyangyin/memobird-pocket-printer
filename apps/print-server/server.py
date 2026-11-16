@@ -57,6 +57,10 @@ VERSION = "1.0.0"
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 
+class PrinterNotReady(Exception):
+    """设备当前状态不能打印（例如缺纸）—— HTTP 层映射成 409。"""
+
+
 # --------------------------------------------------------------------------- #
 # 编码：请求 → 帧（与实现 2 的服务端逻辑一致，但这里直接用库，不经 HTTP）
 # --------------------------------------------------------------------------- #
@@ -151,15 +155,15 @@ class BleWorker:
     def send(self, frames: list[bytes], preheat: bool, timeout: float = 180):
         return self.call(self._send(frames, preheat), timeout)
 
-    async def _read_info(self) -> list[dict]:
+    async def _read_info(self) -> tuple[list[dict], bool | None]:
         from memobird_printer import device
         from memobird_printer.ble import BlePrinter
 
         async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
             infos = await device.read_info(dev, wait=1.5)
-            return [i.as_dict() for i in infos]
+            return [i.as_dict() for i in infos], (device.paper_out(infos[-1]) if infos else None)
 
-    def read_info(self, timeout: float = 30) -> list[dict]:
+    def read_info(self, timeout: float = 30) -> tuple[list[dict], bool | None]:
         return self.call(self._read_info(), timeout)
 
     async def _set_setting(self, tag: int, value: int) -> dict:
@@ -237,10 +241,25 @@ class PrintService:
             raise ValueError(f"未知后端: {backend}")
 
     # ------------------------------------------------------------------ #
+    def paper_state(self) -> bool | None:
+        """读一次缺纸标志（只有 ble 后端能读）。None = 读不到。"""
+        if self.backend != "ble" or not isinstance(self.worker, BleWorker):
+            return None
+        try:
+            _, paper = self.worker.read_info(timeout=25)
+        except Exception:                                     # noqa: BLE001
+            return None
+        self.last_paper_out = paper
+        return paper
+
     def print_request(self, req: dict) -> dict:
         """请求 → 打印 → 结果字典（HTTP 层只负责序列化）"""
         started = time.time()
         with self.lock:                                # 串行：一次只打一张
+            # 预检：显式要求时先看有没有纸（多花 ~2 秒，默认不做）
+            if req.get("checkPaper") and self.paper_state() is True:
+                raise PrinterNotReady("打印机缺纸（0x06=1）—— 放好纸再试")
+
             frames, meta = build_frames(req)
 
             if self.backend == "lan":
@@ -282,6 +301,7 @@ class PrintService:
             "printed": self.count,
             "last": self.last,
             "last_error": self.last_error,
+            "paper_out": getattr(self, "last_paper_out", None),
         }
 
     def device_info(self) -> dict:
@@ -293,9 +313,10 @@ class PrintService:
         if not isinstance(self.worker, BleWorker):
             return {"ok": False, "error": "后端未就绪"}
         with self.lock:
-            infos = self.worker.read_info()
+            infos, paper = self.worker.read_info()
+        self.last_paper_out = paper
         return {"ok": True, "backend": self.backend, "target": self.target,
-                "device": infos[-1] if infos else None}
+                "paper_out": paper, "device": infos[-1] if infos else None}
 
     def device_led(self, on: bool) -> dict:
         """开关指示灯（cmd 0x03 tag 0x03）。只有 ble 后端能做。"""
@@ -448,6 +469,9 @@ class Handler(BaseHTTPRequestHandler):
                 req["kind"] = "image"
             out = self.service.print_request(req)
             self._json(200, out)
+        except PrinterNotReady as exc:
+            self.service.last_error = str(exc)
+            self._json(409, {"ok": False, "error": str(exc)})
         except ValueError as exc:
             self.service.last_error = str(exc)
             self._json(400, {"ok": False, "error": str(exc)})

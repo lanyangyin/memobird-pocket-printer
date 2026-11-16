@@ -127,6 +127,21 @@ $('#btn-print-image').addEventListener('click', () => {
   printApi('/api/encode', imageReq(), '图片打印').catch((e) => log('图片打印失败：' + (e.message || e), 'err'));
 });
 
+$('#btn-feed').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  const mm = parseFloat($('#feed-mm').value) || 0;
+  if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
+  try {
+    const j = await api('/api/feed', { mm, tick: true });
+    $('#meta').textContent = `走纸 ${j.meta.mm}mm · ${j.meta.dots} 点 · ${j.frames.length} 帧`;
+    await link.sendJob({ frames: j.frames.map(b64ToBytes), meta: j.meta }, `走纸 ${mm}mm`, {
+      chunk: parseInt($('#chunk').value, 10),
+      preheat: $('#preheat').checked,
+      onProgress: (r) => setProgress($('#bar'), r),
+    });
+  } catch (e) { log('走纸失败：' + (e.message || e), 'err'); }
+});
+
 $('#btn-calib').addEventListener('click', () => {
   printApi('/api/calibration', { format: 'bmp', feed: true }, '校准图')
     .then(() => log('若上下颠倒 → 勾「垂直翻转」；全白 → 查电量/纸面；断行 → 分片改 20B', 'warn'))

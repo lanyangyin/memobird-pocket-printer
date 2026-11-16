@@ -328,6 +328,30 @@ class PrintService:
         return {"ok": True, "requested": 1 if on else 0, "led": led,
                 "state": {f"0x{k:02x}": v for k, v in sorted(state.items())}}
 
+    def feed(self, req: dict) -> dict:
+        """走纸：{"mm": 50}（精确，白图按点数）或 {"lines": 3}（粗，换行）"""
+        from memobird_printer.paper import blank_frames, line_frames
+
+        if req.get("mm") is not None:
+            frames, meta = blank_frames(mm=float(req["mm"]), dpi=int(req.get("dpi") or 203),
+                                        tick=bool(req.get("tick")))
+        else:
+            frames, meta = line_frames(int(req.get("lines") or 3))
+
+        if self.backend == "fake":
+            self.worker.send(frames, True)
+        elif self.backend == "ble":
+            with self.lock:
+                self.worker.send(frames, True)
+        elif self.backend == "spp":
+            with self.lock:
+                self.worker.send(frames, True)
+        else:
+            raise ValueError("该后端不支持走纸（局域网机型请直接打一张空白图）")
+
+        self.count += 1
+        return {"ok": True, "meta": meta, "frames": len(frames)}
+
     def health(self) -> dict:
         info = {"ok": True, "version": VERSION, "backend": self.backend, "target": self.target}
         if isinstance(self.worker, FakeWorker):
@@ -449,6 +473,19 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._read_json()
                 out = self.service.device_led(bool(body.get("on", True)))
                 self._json(200 if out.get("ok") else 400, out)
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:                                # noqa: BLE001
+                self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        # 走纸（精确按毫米）
+        if path == "/feed":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                self._json(200, self.service.feed(self._read_json()))
             except ValueError as exc:
                 self._json(400, {"ok": False, "error": str(exc)})
             except Exception as exc:                                # noqa: BLE001

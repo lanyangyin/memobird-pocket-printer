@@ -167,6 +167,21 @@ $('#btn-print-image').addEventListener('click', () => {
   print(imageReq(), '图片打印').catch((e) => log('图片打印失败：' + (e.message || e), 'err'));
 });
 
+$('#btn-feed').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  const mm = parseFloat($('#feed-mm').value) || 0;
+  if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
+  try {
+    const job = E.blankJob(mm, { tick: true });
+    $('#meta').textContent = `走纸 ${job.meta.mm}mm · ${job.meta.dots} 点 · ${job.frames.length} 帧`;
+    await link.sendJob(job, `走纸 ${mm}mm`, {
+      chunk: parseInt($('#chunk').value, 10),
+      preheat: $('#preheat').checked,
+      onProgress: (r) => setProgress($('#bar'), r),
+    });
+  } catch (e) { log('走纸失败：' + (e.message || e), 'err'); }
+});
+
 $('#btn-calib').addEventListener('click', async () => {
   try {
     if (!link.connected) { log('先点「连接打印机」', 'warn'); return; }

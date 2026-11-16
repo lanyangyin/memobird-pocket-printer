@@ -152,6 +152,13 @@ check("有纸时 checkPaper 通过", code == 200, str(code))
 service.paper_state = orig_paper
 
 # 设备信息/控灯：fake 后端应该明确拒绝（而不是假装成功）
+code, body = req("POST", "/feed", {"mm": 20})
+check("POST /feed 200", code == 200 and body.get("ok") is True, str(code))
+check("走纸 20mm = 160 点", body.get("meta", {}).get("dots") == 160, str(body.get("meta", {}).get("dots")))
+check("走纸帧数 8", body.get("frames") == 8, str(body.get("frames")))
+code, body = req("POST", "/feed", {"lines": 3})
+check("POST /feed lines 200", code == 200 and body.get("meta", {}).get("lines") == 3)
+
 code, body = req("GET", "/device")
 check("GET /device 在 fake 下 400", code == 400 and body.get("ok") is False, str(code))
 code, body = req("POST", "/device/led", {"on": True})

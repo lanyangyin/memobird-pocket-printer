@@ -261,7 +261,11 @@ footer {
         </label>
         <label class="chk"><input id="preheat" type="checkbox" checked> 预热包</label>
       </div>
+      <div class="row">
+        <label>走纸 <input id="feed-mm" type="number" value="20" min="1" max="500" step="1"> mm</label>
+      </div>
       <div class="actions">
+        <button id="btn-feed" class="ghost">走纸</button>
         <button id="btn-calib" class="primary">打印校准图</button>
         <button id="btn-sizeprobe" class="ghost">字号档位测试</button>
         <button id="btn-led-on" class="ghost">开灯</button>
@@ -1247,6 +1251,26 @@ footer {
     };
   }
 
+
+  /**
+   * 走纸任务：一张全白位图，高 = mm × 8 点（203dpi）。
+   * tick=true 时在第 1 行画 1 个黑点，避免固件把全白当"没东西要打"而跳过。
+   */
+  function blankJob(mm, opts) {
+    opts = opts || {};
+    const dpi = opts.dpi || 203;
+    const dotsPerMm = dpi <= 203 ? 8 : 11.811;
+    const h = Math.max(1, Math.round((mm != null ? mm : (opts.dots || 0)) * dotsPerMm));
+    const w = WIDTH;
+    const raw = new Uint8Array(((w + 7) >> 3) * h);      // 全零 = 全白
+    if (opts.tick) raw[0] = 0x80;
+    const job = jobFromRaw(raw, w, h, 'bmp', { official: true });
+    return {
+      frames: job.frames,
+      meta: Object.assign({ kind: 'feed', mm: +(h / dotsPerMm).toFixed(2), dots: h }, job.meta),
+    };
+  }
+
   /** 走纸：一段纯换行（官方 SDK 打图后会补一帧） */
   function feedJob(lines) {
     const text = '\n'.repeat(Math.max(1, lines || 3));
@@ -1265,7 +1289,7 @@ footer {
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
     ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
-    jobFromRaw, jobFromText, utf8ToGray,
+    jobFromRaw, jobFromText, blankJob, utf8ToGray,
   };
 });
 
@@ -1664,6 +1688,21 @@ $('#btn-preview-image').addEventListener('click', () => {
 $('#btn-print-image').addEventListener('click', () => {
   if (!state.imageDataUrl) { log('先选一张图片', 'warn'); return; }
   print(imageReq(), '图片打印').catch((e) => log('图片打印失败：' + (e.message || e), 'err'));
+});
+
+$('#btn-feed').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  const mm = parseFloat($('#feed-mm').value) || 0;
+  if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
+  try {
+    const job = E.blankJob(mm, { tick: true });
+    $('#meta').textContent = `走纸 ${job.meta.mm}mm · ${job.meta.dots} 点 · ${job.frames.length} 帧`;
+    await link.sendJob(job, `走纸 ${mm}mm`, {
+      chunk: parseInt($('#chunk').value, 10),
+      preheat: $('#preheat').checked,
+      onProgress: (r) => setProgress($('#bar'), r),
+    });
+  } catch (e) { log('走纸失败：' + (e.message || e), 'err'); }
 });
 
 $('#btn-calib').addEventListener('click', async () => {

@@ -389,6 +389,26 @@
     };
   }
 
+
+  /**
+   * 走纸任务：一张全白位图，高 = mm × 8 点（203dpi）。
+   * tick=true 时在第 1 行画 1 个黑点，避免固件把全白当"没东西要打"而跳过。
+   */
+  function blankJob(mm, opts) {
+    opts = opts || {};
+    const dpi = opts.dpi || 203;
+    const dotsPerMm = dpi <= 203 ? 8 : 11.811;
+    const h = Math.max(1, Math.round((mm != null ? mm : (opts.dots || 0)) * dotsPerMm));
+    const w = WIDTH;
+    const raw = new Uint8Array(((w + 7) >> 3) * h);      // 全零 = 全白
+    if (opts.tick) raw[0] = 0x80;
+    const job = jobFromRaw(raw, w, h, 'bmp', { official: true });
+    return {
+      frames: job.frames,
+      meta: Object.assign({ kind: 'feed', mm: +(h / dotsPerMm).toFixed(2), dots: h }, job.meta),
+    };
+  }
+
   /** 走纸：一段纯换行（官方 SDK 打图后会补一帧） */
   function feedJob(lines) {
     const text = '\n'.repeat(Math.max(1, lines || 3));
@@ -407,6 +427,6 @@
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
     ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
-    jobFromRaw, jobFromText, utf8ToGray,
+    jobFromRaw, jobFromText, blankJob, utf8ToGray,
   };
 });

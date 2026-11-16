@@ -155,6 +155,18 @@ def encode_calibration(req: dict) -> dict:
     }
 
 
+def encode_feed(req: dict) -> dict:
+    """走纸：{"mm": 20}（精确，白图按点数）或 {"lines": 3}（粗，换行）。"""
+    from memobird_printer.paper import blank_frames, line_frames
+
+    if req.get("mm") is not None:
+        frames, meta = blank_frames(mm=float(req["mm"]), dpi=int(req.get("dpi") or 203),
+                                    tick=bool(req.get("tick", True)))
+    else:
+        frames, meta = line_frames(int(req.get("lines") or 3))
+    return {"frames": [base64.b64encode(f).decode() for f in frames], "meta": meta}
+
+
 def _render(req: dict):
     """把请求渲染成 (w, h, raw1bpp)。"""
     from PIL import Image
@@ -317,6 +329,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/calibration":
                 self._json(200, encode_calibration(body))
+                return
+            if path == "/api/feed":
+                self._json(200, encode_feed(body))
                 return
             if path == "/api/size-probe":
                 self._json(200, encode_size_probe(body))

@@ -59,6 +59,20 @@ python apps/print-server/server.py --backend fake --port 8100 --verbose
  "last_error": null}
 ```
 
+### `POST /feed`
+
+走纸指定长度（203dpi ⇒ 8 点/mm）：
+
+```json
+{"mm": 20}                    // 精确：打一张 384×160 的全白位图
+{"lines": 3}                  // 粗：发 3 个换行
+{"mm": 20, "tick": true}      // 首个字节画 1 个黑点，防固件跳过全白图（默认 true）
+```
+
+返回：`{"ok": true, "meta": {"dots": 160, "mm": 20.0, "bytes": 7742, "chunks": 8}, "frames": 8}`
+
+> 50 mm 空白 ≈ 19 帧 / 19 KB，比打内容还费 —— 走长距离建议攒着一起走。
+
 ### `GET /device`
 
 读打印机自身信息（仅 BLE 后端，走厂商协议 `cmd 0x01`）：

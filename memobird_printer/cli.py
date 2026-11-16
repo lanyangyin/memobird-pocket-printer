@@ -43,11 +43,16 @@ def _target(args) -> str:
     return "lan"
 
 
+def _image_path(args) -> str | None:
+    """兼容 `image a.png` 与 `image -i a.png` 两种写法"""
+    return args.image or getattr(args, "image_pos", None)
+
+
 def _make_image(args):
-    if args.image:
+    if _image_path(args):
         from PIL import Image
 
-        src = Image.open(args.image)
+        src = Image.open(_image_path(args))
     else:
         src = args.text or ""
     img = prepare(src, mode=args.mode, font_size=args.font_size, font=args.font, invert=args.invert)
@@ -119,12 +124,12 @@ def cmd_selftest(args) -> int:
 
 def cmd_preview(args) -> int:
     out = args.out or "preview.png"
-    if args.image:
+    if _image_path(args):
         from PIL import Image
 
-        img = prepare(Image.open(args.image), mode=args.mode)
+        img = prepare(Image.open(_image_path(args)), mode=args.mode)
     else:
-        img = prepare(args.text or "", mode=args.mode, font_size=args.font_size, font=args.font, invert=args.invert)
+        img = prepare(getattr(args, "text", None) or "", mode=args.mode, font_size=args.font_size, font=args.font, invert=args.invert)
     preview(img, out, args.mode, scale=args.scale)
     print(f"已生成 {out}")
     return 0
@@ -190,8 +195,8 @@ def cmd_print(args) -> int:
         from .lan import LanPrinter
 
         p = LanPrinter(args.lan)
-        if args.text or (not args.image):
-            print(json.dumps(p.print_text(args.text or ""), ensure_ascii=False))
+        if getattr(args, "text", None) or (not _image_path(args)):
+            print(json.dumps(p.print_text(getattr(args, "text", None) or ""), ensure_ascii=False))
         else:
             print(json.dumps(p.print_image(bmp), ensure_ascii=False))
         return 0
@@ -201,8 +206,8 @@ def cmd_print(args) -> int:
             from .ble import BlePrinter
 
             async with BlePrinter(args.ble) as b:
-                if args.text and not args.image:
-                    await b.print_text(args.text)
+                if getattr(args, "text", None) and not _image_path(args):
+                    await b.print_text(getattr(args, "text", None) or "")
                 else:
                     await b.print_raw_image(raw)
         asyncio.run(run())
@@ -213,14 +218,57 @@ def cmd_print(args) -> int:
         from .ble import SppPrinter
 
         with SppPrinter(args.spp) as p:
-            if args.text and not args.image:
-                p.print_text(args.text)
+            if getattr(args, "text", None) and not _image_path(args):
+                p.print_text(getattr(args, "text", None) or "")
             else:
                 p.print_raw_image(raw)
         print("已发送")
         return 0
 
     print("需要 --lan / --ble / --spp 之一")
+    return 1
+
+
+def cmd_feed(args) -> int:
+    """走纸：--mm 精确（白图按点数）或 --lines 粗（换行）"""
+    from .paper import blank_frames, line_frames
+
+    if args.text:
+        # 兼容 `feed 50` 这种写法：位置参数当毫米
+        mm = float(args.text)
+    elif args.mm is not None:
+        mm = float(args.mm)
+    else:
+        mm = None
+
+    if mm is not None:
+        frames, meta = blank_frames(mm=mm, dpi=args.dpi, tick=args.tick)
+    else:
+        frames, meta = line_frames(args.lines)
+
+    print(f"走纸 {meta['mm'] if 'mm' in meta else str(meta['lines']) + ' 行'}："
+          f"{len(frames)} 帧 / {meta['bytes']}B")
+
+    if args.lan:
+        print("局域网机型不支持白图走纸（会打出一张空白纸）", file=sys.stderr)
+        return 1
+    if args.ble:
+        from .ble import BlePrinter
+
+        async def run():
+            async with BlePrinter(args.ble, echo=False) as b:
+                await b.send_frames(frames, preheat=True, inter_frame=0.01)
+        asyncio.run(run())
+        print("已发送")
+        return 0
+    if args.spp:
+        from .ble import SppPrinter
+
+        with SppPrinter(args.spp) as p:
+            p.send_frames(frames, preheat=True)
+        print("已发送")
+        return 0
+    print("需要 --ble / --spp 之一", file=sys.stderr)
     return 1
 
 
@@ -318,7 +366,7 @@ def cmd_cloud_text(args) -> int:
     from .cloud import CloudPrinter
 
     p = CloudPrinter(args.ak, args.device, args.userid)
-    print(json.dumps(p.print_text(args.text), ensure_ascii=False, indent=2))
+    print(json.dumps(p.print_text(getattr(args, "text", None) or ""), ensure_ascii=False, indent=2))
     return 0
 
 
@@ -330,20 +378,34 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("selftest", help="无硬件自检")
     s.set_defaults(func=cmd_selftest)
 
-    for name, fn in (("preview", cmd_preview), ("text", cmd_print), ("image", cmd_print), ("status", cmd_status)):
-        p = sub.add_parser(name)
-        p.add_argument("text", nargs="?", help="要打印的文本")
+    def _common(p):
         p.add_argument("-i", "--image", help="图片路径")
         p.add_argument("-o", "--out", help="预览输出 png")
         p.add_argument("--lan", help="局域网打印机 IP")
         p.add_argument("--ble", help="BLE 设备地址")
         p.add_argument("--spp", help="串口 COM 名")
-        p.add_argument("--mode", default="floyd", choices=["none", "floyd", "atkinson", "bayer", "threshold"])
+        p.add_argument("--mode", default="floyd",
+                       choices=["none", "floyd", "atkinson", "bayer", "threshold"])
         p.add_argument("--font", help="字体文件")
         p.add_argument("--font-size", type=int, default=24)
         p.add_argument("--scale", type=int, default=2)
         p.add_argument("--invert", action="store_true")
+        return p
+
+    # preview / text：位置参数是文本
+    for name, fn in (("preview", cmd_preview), ("text", cmd_print)):
+        p = _common(sub.add_parser(name))
+        p.add_argument("text", nargs="?", help="要打印的文本")
         p.set_defaults(func=fn)
+
+    # image：位置参数是图片路径（也可以 -i 指定）
+    p = _common(sub.add_parser("image"))
+    p.add_argument("image_pos", nargs="?", help="图片路径")
+    p.set_defaults(func=cmd_print)
+
+    # status：只要目标
+    p = _common(sub.add_parser("status"))
+    p.set_defaults(func=cmd_status)
 
     s = sub.add_parser("scan")
     s.add_argument("--timeout", type=float, default=8)
@@ -357,6 +419,17 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("lan-scan")
     s.add_argument("--subnet", help="例如 192.168.1")
     s.set_defaults(func=cmd_lan_scan)
+
+    s = sub.add_parser("feed", help="走纸：--mm 精确（白图点数）/ --lines 粗（换行）")
+    s.add_argument("text", nargs="?", help="毫米数（位置写法，如 feed 50）")
+    s.add_argument("--mm", type=float, help="走纸长度（毫米）")
+    s.add_argument("--lines", type=int, default=3, help="按行走纸（粗）")
+    s.add_argument("--dpi", type=int, default=203, choices=[203, 300])
+    s.add_argument("--tick", action="store_true", help="画 1 个黑点，防止固件跳过全白图")
+    s.add_argument("--ble")
+    s.add_argument("--spp")
+    s.add_argument("--lan")
+    s.set_defaults(func=cmd_feed)
 
     s = sub.add_parser("info", help="读设备信息（序列号/状态字，cmd 0x01）")
     s.add_argument("--ble", required=True)

@@ -87,6 +87,18 @@ for (const c of fixtures.text_jobs) {
     `${job.frames.length}/${job.meta.bytes}`, `${c.meta.chunks}/${c.meta.bytes}`);
 }
 
+
+/* ------------------------------------------------------ 9. 走纸任务 */
+console.log('\n9) 走纸（全白位图，8 点/mm）');
+for (const [mm, dots, bytes, chunks] of [[20, 160, 7742, 8], [50, 400, 19262, 19], [1, 8, 446, 1]]) {
+  const job = enc.blankJob(mm);
+  check(`${mm}mm → ${dots} 点 / ${bytes}B / ${chunks} 帧`,
+    `${job.meta.dots}/${job.meta.bytes}/${job.frames.length}`,
+    `${dots}/${bytes}/${chunks}`);
+}
+const tickJob = enc.blankJob(10, { tick: true });
+check('tick 会把首个字节置 0x80', tickJob.frames.length > 0, true);
+
 /* ------------------------------------------------------------------ 汇总 */
 console.log(`\n通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);
 process.exit(failed ? 1 : 0);

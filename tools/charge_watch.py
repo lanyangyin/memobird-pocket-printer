@@ -21,7 +21,7 @@ import time
 
 for _s in (sys.stdout, sys.stderr):
     try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
+        _s.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     except Exception:
         pass
 
@@ -59,8 +59,17 @@ async def main(args) -> int:
         online = info is not None
         offline = 0 if online else offline + 1
         print(f"{t}   " + "  ".join(f"{'-' if v is None else v:>4}" for v in vals)
-              + f"   {'✓' if online else '✗'}")
+              + f"   {'✓' if online else '✗'}", flush=True)
         rows.append([t, *vals, online])
+
+        # 每采一次就落盘，跑到一半也能看
+        if args.csv:
+            new_file = not os.path.exists(args.csv)
+            with open(args.csv, "a", encoding="utf-8", newline="") as f:
+                w = csv.writer(f)
+                if new_file:
+                    w.writerow(header)
+                w.writerow(rows[-1])
 
         if offline >= 3:
             print("\n连续 3 次采样都连不上 —— 设备可能已关机。请按键唤醒 / 插上充电线后重跑。")
@@ -69,11 +78,7 @@ async def main(args) -> int:
             await asyncio.sleep(args.interval)
 
     if args.csv and rows:
-        with open(args.csv, "w", encoding="utf-8", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(header)
-            w.writerows(rows)
-        print(f"\n已写入 {args.csv}（{len(rows)} 行）")
+        print(f"\n已逐行写入 {args.csv}（{len(rows)} 行）")
 
     online_rows = [r for r in rows if r[-1]]
     if len(online_rows) >= 2:

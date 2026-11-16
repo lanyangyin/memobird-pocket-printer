@@ -64,14 +64,14 @@ class Tag:
 #: 状态帧里的 TLV tag 语义
 TAGS: dict[int, Tag] = {
     0xFF: Tag("magic", "固定 0x01", "flag", False, "每次都是 01"),
-    0x01: Tag("battery_or_temp", "电量% / 温度℃?", "sensor", False,
-              "写入无效 → 是传感器值；充电对照可确认哪个"),
+    0x01: Tag("constant_23", "恒定 23（不是温度也不是电量）", "unknown", False,
+              "实测：充电/打满黑页/捂热电池/写入 30 全都不变 → 更像固件常量或永不更新的假电量"),
     0x02: Tag("auto_off_minutes", "自动关机时间（分钟）", "setting", False,
               "写入即生效，状态同步；默认 10"),
     0x03: Tag("led", "指示灯", "setting", True,
               "写 1 亮 / 0 灭，状态同步 —— 因果已用肉眼验证"),
-    0x04: Tag("battery_mv_step", "电压/温度档位?", "sensor", False,
-              "自然波动 80↔81，写入无效"),
+    0x04: Tag("voltage_step", "电压类读数（0.05V/LSB?）", "sensor", False,
+              "会随负载变：打黑页 81→80，之后自己回来；写入无效"),
     0x05: Tag("flag_05", "状态位", "sensor", False, "恒为 1"),
     0x06: Tag("flag_06", "状态位", "sensor", False, "恒为 0"),
     0x0F: Tag("serial", "序列号", "info", True, "32 字节 ASCII，尾随 \\0"),

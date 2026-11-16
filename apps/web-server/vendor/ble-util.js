@@ -114,6 +114,64 @@
     return { cmd, len, payload, tlvs, sum, sumOk: sum === calc };
   }
 
+  /**
+   * 设备状态 TLV 语义 —— 与 memobird_printer/device.py **保持同步**（真机实测结论见那边）
+   * confirmed=true 表示因果关系已用肉眼/对照验证过
+   */
+  const DEVICE_TAGS = {
+    0xff: { name: 'magic', label: '固定 0x01', confirmed: false },
+    0x01: { name: 'battery_or_temp', label: '电量% / 温度℃?', confirmed: false },
+    0x02: { name: 'auto_off_minutes', label: '自动关机(分钟)', confirmed: false },
+    0x03: { name: 'led', label: '指示灯', confirmed: true },
+    0x04: { name: 'battery_mv_step', label: '电压/温度档位?', confirmed: false },
+    0x05: { name: 'flag_05', label: '状态位', confirmed: false },
+    0x06: { name: 'flag_06', label: '状态位', confirmed: false },
+    0x0f: { name: 'serial', label: '序列号', confirmed: true },
+    0x13: { name: 'flags_13', label: '标志位', confirmed: false },
+    0x14: { name: 'counter_14', label: '8 字节计数?', confirmed: false },
+  };
+
+  /** cmd 0x01：读状态（详版）。校验和已算好：aa 01 00 01 54 */
+  const STATUS_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x01, 0x54]);
+  /** cmd 0x09：读序列号 */
+  const SERIAL_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x09, 0x4c]);
+
+  /** 把状态帧解析成 {cmd, serial, fields:[{tag,label,int,ascii,confirmed}]} */
+  function parseStatus(bytes) {
+    const f = parseFrame(bytes);
+    if (!f) return null;
+    const out = { cmd: f.cmd, serial: null, fields: [] };
+    for (const t of f.tlvs) {
+      const meta = DEVICE_TAGS[t.tag] || { name: '?', label: '未知', confirmed: false };
+      const isAscii = t.len > 0 && Array.from(t.value).every((b) => b >= 32 && b < 127);
+      let int = null;
+      if (t.len <= 8) {
+        int = 0;
+        for (let i = t.value.length - 1; i >= 0; i--) int = int * 256 + t.value[i];
+      }
+      const ascii = isAscii ? Array.from(t.value, (b) => String.fromCharCode(b)).join('') : null;
+      out.fields.push({
+        tag: t.tag, len: t.len, name: meta.name, label: meta.label,
+        confirmed: meta.confirmed, int, ascii,
+      });
+      if (t.tag === 0x0f && ascii) out.serial = ascii.replace(/\0+$/, '');
+    }
+    return out;
+  }
+
+  /** 状态 → 人读文本行 */
+  function formatStatus(parsed) {
+    if (!parsed) return ['（不是合法的设备回包）'];
+    const lines = [`cmd=0x${parsed.cmd.toString(16).padStart(2, '0')}`];
+    if (parsed.serial) lines.push(`  序列号         : ${parsed.serial}`);
+    for (const f of parsed.fields) {
+      if (f.tag === 0x0f) continue;
+      const val = f.int !== null ? f.int : (f.ascii || '(二进制)');
+      lines.push(`  0x${f.tag.toString(16).padStart(2, '0')} ${f.label.padEnd(16)} ${String(val).padEnd(10)}${f.confirmed ? ' ✓' : ''}`);
+    }
+    return lines;
+  }
+
   /** 把 GATT 树拍成文本（调试页展示/复制用） */
   async function dumpGatt(services) {
     const lines = [];
@@ -135,5 +193,7 @@
     OPTIONAL_SERVICES,
     serviceCharacteristics, collectCharacteristics, pickWrite, parseFrame, dumpGatt,
     isWritable, isNotifiable,
+    // 设备信息（cmd 0x01/0x09）
+    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus,
   };
 });

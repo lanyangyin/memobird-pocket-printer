@@ -139,6 +139,21 @@ $('#btn-sizeprobe').addEventListener('click', () => {
     .catch((e) => log('档位测试失败：' + (e.message || e), 'err'));
 });
 
+$('#btn-device').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  try {
+    const infos = await link.readDeviceInfo(1500);
+    if (!infos.length) {
+      log('设备没有回包 —— 可能被官方 App 占着，或固件不回应 cmd 0x01', 'warn');
+      return;
+    }
+    const f = infos[infos.length - 1];
+    $('#dev-out').textContent = window.MBBle.formatStatus(f).join('\n');
+    const pick = (tag) => { const x = f.fields.find((y) => y.tag === tag); return x ? x.int : '?'; };
+    log(`设备信息：序列号 ${f.serial || '?'} · 0x01=${pick(0x01)} · 灯=${pick(0x03)} · 0x02=${pick(0x02)}`, 'ok');
+  } catch (e) { log('读设备信息失败：' + (e.message || e), 'err'); }
+});
+
 $('#btn-gatt').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }
   try {

@@ -145,11 +145,22 @@ class BleWorker:
     async def _send(self, frames: list[bytes], preheat: bool):
         from memobird_printer.ble import BlePrinter
 
-        async with BlePrinter(self.target, settle=self.settle) as dev:
+        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
             await dev.send_frames(frames, preheat=preheat, inter_frame=0.02)
 
     def send(self, frames: list[bytes], preheat: bool, timeout: float = 180):
         return self.call(self._send(frames, preheat), timeout)
+
+    async def _read_info(self) -> list[dict]:
+        from memobird_printer import device
+        from memobird_printer.ble import BlePrinter
+
+        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
+            infos = await device.read_info(dev, wait=1.5)
+            return [i.as_dict() for i in infos]
+
+    def read_info(self, timeout: float = 30) -> list[dict]:
+        return self.call(self._read_info(), timeout)
 
 
 class SppWorker:
@@ -263,6 +274,19 @@ class PrintService:
             "last_error": self.last_error,
         }
 
+    def device_info(self) -> dict:
+        """读设备信息（cmd 0x01）。只有 ble 后端能读。"""
+        if self.backend == "fake":
+            return {"ok": False, "backend": "fake", "error": "fake 后端没有真实设备"}
+        if self.backend != "ble":
+            return {"ok": False, "backend": self.backend, "error": "该后端暂不支持读设备信息"}
+        if not isinstance(self.worker, BleWorker):
+            return {"ok": False, "error": "后端未就绪"}
+        with self.lock:
+            infos = self.worker.read_info()
+        return {"ok": True, "backend": self.backend, "target": self.target,
+                "device": infos[-1] if infos else None}
+
     def health(self) -> dict:
         info = {"ok": True, "version": VERSION, "backend": self.backend, "target": self.target}
         if isinstance(self.worker, FakeWorker):
@@ -357,6 +381,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "error": "unauthorized"})
                 return
             self._json(200, self.service.status())
+        elif path == "/device":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                self._json(200, self.service.device_info())
+            except Exception as exc:                                # noqa: BLE001
+                self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         elif path in ("/", "/index.html"):
             html = INDEX.replace("__VER__", VERSION).replace("__BACKEND__", self.service.backend)
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")

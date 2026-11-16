@@ -55,7 +55,9 @@ class BlePrinter:
         self.timeout = timeout
         self.echo = echo
         self._client = None
-        self._notifies: list[bytes] = []
+        self._rx = bytearray()          # 通知分片的接收缓冲
+        self._notifies: list[bytes] = []   # 已重组成完整帧
+        self._chunks: list[bytes] = []     # 原始通知分片（排查用）
 
     # ------------------------------------------------------------------ #
     async def __aenter__(self):
@@ -64,8 +66,14 @@ class BlePrinter:
         self._client = BleakClient(self.address, timeout=self.timeout)
         await self._client.connect()
         self._notifies.clear()
+        self._rx.clear()
+        self._chunks.clear()
         try:
             await self._client.start_notify(self.notify_uuid, self._on_notify)
+            await asyncio.sleep(0.3)          # 让订阅稳定，随后清掉残留分片
+            self._notifies.clear()
+            self._rx.clear()
+            self._chunks.clear()
         except Exception:  # notify 不是所有固件都必填
             pass
         return self
@@ -79,10 +87,24 @@ class BlePrinter:
             await self._client.disconnect()
 
     def _on_notify(self, _sender, data: bytearray) -> None:
+        """BLE 通知可能把一个长帧拆成多个 20 字节分片 —— 这里按 AA/LEN 重组。"""
         payload = bytes(data)
-        self._notifies.append(payload)
-        if self.echo:
-            print(f"[notify] {payload.hex(' ')}")
+        self._chunks.append(payload)
+        self._rx.extend(payload)
+
+        while len(self._rx) >= 5:
+            if self._rx[0] != 0xAA:                 # 失步，丢一个字节重新对齐
+                del self._rx[0]
+                continue
+            length = self._rx[1] | (self._rx[2] << 8)
+            total = 3 + length + 1
+            if len(self._rx) < total:
+                break                               # 还没收全，等下一片
+            frame = bytes(self._rx[:total])
+            del self._rx[:total]
+            self._notifies.append(frame)
+            if self.echo:
+                print(f"[notify] {frame.hex(' ')}")
 
     # ------------------------------------------------------------------ #
     async def write(self, data: bytes) -> None:
@@ -115,12 +137,23 @@ class BlePrinter:
         await asyncio.sleep(0.5)
         return b""
 
-    async def transact(self, frame: bytes, wait: float = 1.2) -> list[bytes]:
-        """发一帧并收集 wait 秒内的通知回包（读设备信息/试探命令用）。"""
-        start = len(self._notifies)
-        await self.write(frame)
-        await asyncio.sleep(wait)
-        return self._notifies[start:]
+    async def transact(self, frame: bytes, wait: float = 1.2, retries: int = 2) -> list[bytes]:
+        """
+        发一帧并收集完整回包帧（读设备信息/试探命令用）。
+
+        两个坑（Windows + GT1 实测）：
+          1. 刚订阅 notify 时会先收到**上一次连接残留的分片** → 每次发送前清空缓冲；
+          2. 偶发丢应答 → 自动重试。
+        """
+        for attempt in range(max(1, retries)):
+            self._notifies.clear()
+            self._rx.clear()
+            self._chunks.clear()
+            await self.write(frame)
+            await asyncio.sleep(wait + 0.3 * attempt)
+            if self._notifies:
+                return list(self._notifies)
+        return []
 
     async def read_device_info(self, wait: float = 1.2):
         """cmd 0x01 → 解析成 DeviceInfo（见 device.py）"""

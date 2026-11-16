@@ -83,7 +83,7 @@ lines = device.decode_text([frame])
 for line in lines:
     print("   " + line)
 check("含序列号行", any("序列号" in x for x in lines))
-check("含 tag 行", any("tag=0x01" in x for x in lines))
+check("含 tag 行", any("0x01" in x for x in lines))
 
 print("\n4) 坏数据不崩")
 check("空帧返回 None", device.parse_status(b"") is None)
@@ -95,9 +95,30 @@ check("TLV 不完整也不抛异常", device.parse_status(odd) is not None)
 print("\n5) 命令帧构造")
 f1 = device.status_frame()
 check("status_frame = aa01000154", f1.hex() == "aa01000154", f1.hex())
-f2 = device.control_frame(0x03, 1)
-check("control_frame 是合法帧", f2[0] == 0xAA and f2[3] == 0x03, f2.hex())
-check("control_frame 校验和正确", packet.parse_frame(f2) is not None)
+f2 = device.setting_frame(0x03, 1)
+check("setting_frame 是合法帧", f2[0] == 0xAA and f2[3] == 0x03, f2.hex())
+check("setting_frame 校验和正确", packet.parse_frame(f2) is not None)
+check("setting_frame 开灯 = aa0500030301000149", f2.hex() == "aa0500030301000149", f2.hex())
+
+print("\n6) 设置项白名单与范围校验")
+try:
+    device.setting_frame(0x99, 1)
+    check("未验证的 tag 应拒绝", False)
+except ValueError as exc:
+    check("未验证的 tag 被拒绝", "不在已验证" in str(exc), str(exc))
+try:
+    device.setting_frame(0x03, 5)          # 指示灯只有 0/1
+    check("超范围应拒绝", False)
+except ValueError as exc:
+    check("超范围被拒绝", "取值范围" in str(exc), str(exc))
+check("0x03 在可写白名单里", 0x03 in device.SETTINGS)
+check("0x02 在可写白名单里", 0x02 in device.SETTINGS)
+
+print("\n7) tag 语义表（与前端 ble-util.js 保持一致）")
+check("序列号 tag 标为 confirmed", device.TAGS[0x0F].confirmed is True)
+check("指示灯 tag 标为 confirmed", device.TAGS[0x03].confirmed is True)
+check("电量/温度仍是推测", device.TAGS[0x01].confirmed is False)
+check("DeviceInfo.value() 取整数", info.value(0x01) == 23, str(info.value(0x01)))
 
 print()
 if fails:

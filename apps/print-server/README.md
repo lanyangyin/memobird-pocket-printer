@@ -59,6 +59,19 @@ python apps/print-server/server.py --backend fake --port 8100 --verbose
  "last_error": null}
 ```
 
+### `GET /device`
+
+读打印机自身信息（仅 BLE 后端，走厂商协议 `cmd 0x01`）：
+
+```json
+{"ok": true, "backend": "ble", "target": "00:15:83:E4:7A:F2",
+ "device": {"cmd": "0x01", "serial": "636404963750000000",
+            "fields": {"0x01": {"label": "电量% / 温度℃?", "int": 23, "confirmed": false},
+                       "0x03": {"label": "指示灯", "int": 0, "confirmed": true}}}}
+```
+
+字段语义与"哪些已证实"见 [`../../docs/协议说明.md`](../../docs/协议说明.md) 第 1.7 节。
+
 ### `POST /print`（也可以 `/print/text`、`/print/image`）
 
 ```json

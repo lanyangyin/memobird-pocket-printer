@@ -53,6 +53,9 @@
       connected: false,
     };
 
+    /** 收到的所有通知（query 用） */
+    const notifications = [];
+
     /** 取服务；getPrimaryServices() 没覆盖到的已知服务再单独补问 */
     async function servicesWithFallback(server) {
       let services = [];
@@ -101,6 +104,8 @@
           await state.notifyChr.startNotifications();
           state.notifyChr.addEventListener('characteristicvaluechanged', (e) => {
             const v = new Uint8Array(e.target.value.buffer);
+            notifications.push(v);
+            if (notifications.length > 64) notifications.shift();
             emit(`notify ${v.length}B ${hex(v)}${describeFrame(v)}`, 'hex');
           });
           emit(`通知特征值：${state.notifyChr.uuid}`, 'ok');
@@ -178,6 +183,29 @@
       state.notifyChr = null;
     }
 
+    /**
+     * 发一帧并收集 waitMs 内的通知回包（读设备信息用）
+     * @returns {Promise<Uint8Array[]>}
+     */
+    async function query(frame, waitMs, chunk) {
+      if (!state.writeChr) throw new Error('还没连接打印机');
+      const start = notifications.length;
+      await writeAll(frame, '', chunk || 20);
+      await sleep(waitMs == null ? 1500 : waitMs);
+      return notifications.slice(start);
+    }
+
+    /** 读设备信息（cmd 0x01），返回解析后的对象数组 */
+    async function readDeviceInfo(waitMs) {
+      const frames = await query(BLE.STATUS_FRAME, waitMs);
+      const out = [];
+      for (const f of frames) {
+        const parsed = BLE.parseStatus(f);
+        if (parsed && (parsed.cmd === 0x01 || parsed.cmd === 0x02 || parsed.cmd === 0x0a)) out.push(parsed);
+      }
+      return out;
+    }
+
     /** 探测 GATT：返回文本行，供调试页展示 */
     async function dumpGatt() {
       if (!state.server) return [];
@@ -187,7 +215,7 @@
 
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
-      servicesWithFallback,
+      servicesWithFallback, query, readDeviceInfo,
       get connected() { return state.connected; },
     };
   }

@@ -272,6 +272,40 @@ def cmd_sweep(args) -> int:
     return 0
 
 
+def cmd_setting(args) -> int:
+    """写一个已验证的设置项（tag 0x02 时间 / 0x03 指示灯），写完读回状态"""
+    if not args.ble:
+        print("需要 --ble <地址>", file=sys.stderr)
+        return 1
+    from .ble import BlePrinter
+    from . import device
+
+    tag = int(args.tag, 0)
+    value = int(args.value, 0)
+    try:
+        frame = device.setting_frame(tag, value)          # 先做参数校验
+    except ValueError as exc:
+        print(f"参数不合法：{exc}", file=sys.stderr)
+        return 1
+
+    async def run():
+        async with BlePrinter(args.ble, echo=False) as b:
+            await b.transact(frame, wait=1.0)
+            return await device.read_info(b, detail=False, wait=1.5)
+
+    infos = asyncio.run(run())
+    if not infos:
+        print("命令已发出，但没读到状态回包", file=sys.stderr)
+        return 1
+    info = infos[-1]
+    print(f"写入 0x{tag:02x} = {value}")
+    for line in device.decode_text([info.raw]):
+        print(line)
+    got = info.value(tag)
+    print(f"\n读回 0x{tag:02x} = {got}  {'✅ 生效' if got == value else '⚠️ 与写入值不一致'}")
+    return 0
+
+
 def cmd_cloud_bind(args) -> int:
     from .cloud import CloudPrinter
 
@@ -336,6 +370,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--end", type=lambda v: int(v, 0), default=8)
     s.add_argument("--wait", type=float, default=0.8)
     s.set_defaults(func=cmd_sweep)
+
+    s = sub.add_parser("setting", help="写设置项（0x02 时间 / 0x03 指示灯）并读回")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--tag", required=True, help="如 0x02")
+    s.add_argument("--value", required=True, help="如 5")
+    s.set_defaults(func=cmd_setting)
 
     s = sub.add_parser("cloud-bind")
     s.add_argument("--ak", required=True)

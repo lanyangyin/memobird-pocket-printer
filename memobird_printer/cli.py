@@ -266,7 +266,7 @@ def cmd_print(args) -> int:
                     await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
                 # 图片帧没有结束标记：用状态查询当终结帧 → 零走纸
                 if not (getattr(args, "text", None) and not _image_path(args)):
-                    term = getattr(args, "terminator", "feed")
+                    term = getattr(args, "terminator", "status")
                     if term == "feed":
                         await asyncio.sleep(0.3)
                         await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
@@ -477,8 +477,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
-        p.add_argument("--terminator", default="feed", choices=["feed", "status", "none"],
-                       help="图片的终结帧：feed=走纸(默认) / status=状态查询(零走纸) / none")
+        p.add_argument("--terminator", default="status", choices=["feed", "status", "none"],
+                       help="图片的终结帧：status=状态查询(默认，零走纸) / feed=走纸 / none=不发")
         p.add_argument("--segment-mm", type=float, default=0,
                        help="长图分段打印，每段毫米数（>0 启用；绕过 BLE 吞吐不足）")
         return p

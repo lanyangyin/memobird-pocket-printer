@@ -191,15 +191,15 @@ class BlePrinter:
         await self.send_frames(job.frames, preheat=True)
 
     async def print_raw_image(self, raw: bytes, *, preheat: bool = True,
-                              terminator: str = "feed", feed_lines: int = 3) -> None:
+                              terminator: str = "status", feed_lines: int = 0) -> None:
         """打印 1bpp 裸位图。
 
         图片帧本身没有"结束标记"，实测不补一帧固件不会真正出纸。
         终结帧三选一：
 
+        * "status" —— 发一条状态查询（**默认**）：给固件"任务结束"信号，不驱动电机 ⇒ 零走纸
         * "feed"   —— 发 N 个换行（会送出 N 行空白，N=3 约 12mm）
-        * "status" —— 发一条状态查询（不驱动电机 ⇒ 零走纸）
-        * "none"   —— 不发（实测多数固件不出纸）
+        * "none"   —— 不发：小图能打，**大图会中途断**（实测 23 帧只出第一根刻度）
         """
         job = packet.build_bitmap_job(raw)
         await self.send_frames(job.frames, preheat=preheat)

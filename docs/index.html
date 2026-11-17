@@ -263,7 +263,7 @@ footer {
       </div>
       <div class="row">
         <label>走纸 <input id="feed-mm" type="number" value="0" min="0" max="500" step="1"> mm</label>
-        <label>终止帧 <input id="feed-lines" type="number" value="3" min="0" max="8" step="1"> 行</label>
+        <label>打后走纸 <input id="feed-lines" type="number" value="0" min="0" max="8" step="1"> 行</label>
         <label>纸总长 <input id="total-mm" type="number" min="20" max="500" step="1" placeholder="留空=不限"> mm</label>
         <label>浓度
           <select id="density">
@@ -1753,6 +1753,10 @@ async function print(req, label) {
     preheat: $('#preheat').checked,
     onProgress: (r) => setProgress($('#bar'), r),
   });
+
+  // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
+  // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
+  try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
 
   if (dens && restore != null) {
     try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }

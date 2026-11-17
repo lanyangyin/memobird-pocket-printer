@@ -150,6 +150,10 @@ async function print(req, label) {
     onProgress: (r) => setProgress($('#bar'), r),
   });
 
+  // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
+  // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
+  try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
+
   if (dens && restore != null) {
     try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }
     catch (e) { log('恢复浓度失败：' + (e.message || e), 'warn'); }

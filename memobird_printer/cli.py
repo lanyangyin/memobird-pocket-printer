@@ -277,10 +277,12 @@ def cmd_print(args) -> int:
                     if getattr(args, "exact", False):
                         total_frames = sum(
                             max(1, (62 + 48 * page.size[1] + 1023) // 1024) for page in pages)
-                        if total_frames > 10:
-                            print(f"⚠ --exact 不发终结帧：本次约 {total_frames} 帧，"
-                                  f"大任务可能打不完整（实测 >20 帧会中途断）；"
-                                  f"要保险就加 --terminator status", file=sys.stderr)
+                        from .paper import EXACT_SAFE_FRAMES
+
+                        if total_frames > EXACT_SAFE_FRAMES:
+                            print(f"⚠ --exact 不发终结帧：本次约 {total_frames} 帧 > 安全上限 "
+                                  f"{EXACT_SAFE_FRAMES} 帧（实测 15 帧只出白纸）；"
+                                  f"要保险就用默认的 --terminator status", file=sys.stderr)
 
                     for n, page in enumerate(pages, 1):
                         pw, ph, praw = dither_to_raw(page, args.mode)

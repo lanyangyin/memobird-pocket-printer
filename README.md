@@ -97,6 +97,19 @@ python -m memobird_printer preview "文本" -o p.png       # 本地看抖动效�
 | `lan.py` | WiFi 机型 `http://<ip>/sys/printer` |
 | `cloud.py` | 咕咕机开放平台 `open.memobird.cn` |
 
+## 定时 / 远程打印
+
+```bash
+python apps/print-server/server.py --backend ble --target 00:15:83:E4:7A:F2 --port 8100 --jobs-file jobs.json
+
+curl -X POST localhost:8100/jobs -d '{"text":"开会提醒","delaySec":60}'      # 60 秒后打
+curl -X POST localhost:8100/jobs -d '{"text":"日报","repeatSec":3600}'      # 每小时打
+curl localhost:8100/jobs                                                    # 看队列
+curl -X DELETE localhost:8100/jobs/<id>                                     # 取消
+```
+
+任务会先检查**缺纸**（缺纸就等，不白打）、失败重试 3 次、支持 `--jobs-file` 落盘。
+
 ## 设备信息（真机实测）
 
 ```bash

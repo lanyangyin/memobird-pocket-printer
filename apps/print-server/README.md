@@ -59,6 +59,26 @@ python apps/print-server/server.py --backend fake --port 8100 --verbose
  "last_error": null}
 ```
 
+### `POST /jobs` —— 定时 / 重复打印
+
+任务体就是一个 `/print` 请求，外加时间字段：
+
+```json
+{"text": "11:00 开会", "delaySec": 60}          // 60 秒后
+{"text": "开会",       "at": "2026-11-18T08:00:00"}   // 指定本地时刻
+{"text": "日报",       "repeatSec": 3600}       // 每小时一次
+```
+
+返回 `201 {"ok": true, "job": {...}}`。`GET /jobs` 看全部任务，`DELETE /jobs/<id>` 取消。
+
+行为：
+
+* 定时任务**默认开缺纸预检**（`checkPaper: true`）—— 缺纸不会白打，状态变 `deferred` 并 60 秒后重试
+* 失败重试 3 次后标记 `error`（`lastError` 里有原因）
+* `repeatSec` 的任务执行后自动排下一次
+* 加 `--jobs-file jobs.json` 可落盘，重启不丢任务
+* 一个任务从到点到打完约 19 秒（BLE：预检一次连接 + 打印一次连接）
+
 ### `POST /feed`
 
 走纸指定长度（203dpi ⇒ 8 点/mm）：

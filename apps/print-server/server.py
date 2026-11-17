@@ -41,6 +41,8 @@ for _s in (sys.stdout, sys.stderr):
 import threading
 import time
 import traceback
+import uuid
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -391,6 +393,149 @@ class PrintService:
 
 
 # --------------------------------------------------------------------------- #
+# 定时任务队列
+# --------------------------------------------------------------------------- #
+class JobQueue:
+    """
+    定时/重复打印任务队列（内存 + 可选 JSON 落盘）。
+
+    任务就是一个 /print 请求，外加时间字段：
+
+        {"text": "开会", "delaySec": 60}                    # 60 秒后打
+        {"text": "开会", "at": "2026-11-18T08:00:00"}       # 指定时刻（本地时间）
+        {"text": "日报", "repeatSec": 3600}                 # 每小时一次
+
+    缺纸/失败不会把任务丢掉：状态变 deferred/error，稍后自动重试（默认 60 s）。
+    """
+
+    RETRY_SEC = 60
+
+    def __init__(self, service: "PrintService", *, persistence: str | None = None):
+        self.service = service
+        self.persistence = persistence
+        self.jobs: dict[str, dict] = {}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        if persistence and os.path.exists(persistence):
+            try:
+                with open(persistence, encoding="utf-8") as f:
+                    for job in json.load(f):
+                        self.jobs[job["id"]] = job
+            except Exception:                                  # noqa: BLE001
+                pass
+
+    # ---------------------------------------------------------------- 存取
+    def _save(self) -> None:
+        if not self.persistence:
+            return
+        try:
+            tmp = self.persistence + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(list(self.jobs.values()), f, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.persistence)
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    def add(self, req: dict) -> dict:
+        now = time.time()
+        if req.get("at"):
+            due = datetime.fromisoformat(str(req["at"]).replace("Z", "+00:00")).timestamp()
+        elif req.get("delaySec") is not None:
+            due = now + float(req["delaySec"])
+        else:
+            due = now
+
+        job = {
+            "id": uuid.uuid4().hex[:12],
+            "createdAt": datetime.fromtimestamp(now).isoformat(timespec="seconds"),
+            "dueAt": datetime.fromtimestamp(due).isoformat(timespec="seconds"),
+            "due": due,
+            "repeatSec": float(req["repeatSec"]) if req.get("repeatSec") else None,
+            "req": {k: v for k, v in req.items() if k not in ("at", "delaySec", "repeatSec")},
+            "status": "pending",
+            "attempts": 0,
+            "lastError": None,
+            "printedAt": None,
+        }
+        # 定时任务默认做缺纸预检（宁可晚一点，也别打空）
+        job["req"].setdefault("checkPaper", True)
+        with self._lock:
+            self.jobs[job["id"]] = job
+            self._save()
+        return job
+
+    def list(self) -> list[dict]:
+        with self._lock:
+            return sorted(self.jobs.values(), key=lambda j: j["due"])
+
+    def cancel(self, job_id: str) -> bool:
+        with self._lock:
+            if job_id in self.jobs:
+                self.jobs.pop(job_id)
+                self._save()
+                return True
+            return False
+
+    # ---------------------------------------------------------------- 执行
+    def _run_job(self, job: dict) -> None:
+        try:
+            out = self.service.print_request(job["req"])
+            job["attempts"] += 1
+            job["printedAt"] = datetime.now().isoformat(timespec="seconds")
+            job["lastError"] = None
+            if job["repeatSec"]:
+                job["due"] = time.time() + job["repeatSec"]
+                job["dueAt"] = datetime.fromtimestamp(job["due"]).isoformat(timespec="seconds")
+                job["status"] = "pending"
+            else:
+                job["status"] = "done"
+            del out
+        except PrinterNotReady as exc:
+            job["attempts"] += 1
+            job["status"] = "deferred"
+            job["lastError"] = str(exc)
+            job["due"] = time.time() + self.RETRY_SEC
+            job["dueAt"] = datetime.fromtimestamp(job["due"]).isoformat(timespec="seconds")
+        except Exception as exc:                               # noqa: BLE001
+            job["attempts"] += 1
+            job["status"] = "error"
+            job["lastError"] = f"{type(exc).__name__}: {exc}"
+            if job["attempts"] < 3:
+                job["due"] = time.time() + self.RETRY_SEC
+                job["dueAt"] = datetime.fromtimestamp(job["due"]).isoformat(timespec="seconds")
+
+    def tick(self) -> int:
+        """执行所有到点的任务，返回执行条数（测试也直接调它）"""
+        now = time.time()
+        with self._lock:
+            due = [j for j in self.jobs.values()
+                   if j["status"] in ("pending", "deferred", "error") and j["due"] <= now]
+        for job in due:
+            job["status"] = "running"
+            self._run_job(job)
+            with self._lock:
+                if job["status"] == "done":
+                    pass                      # 留着，GET /jobs 能看到历史
+                self._save()
+        return len(due)
+
+    # ---------------------------------------------------------------- 后台线程
+    def start(self) -> None:
+        def loop():
+            while not self._stop.wait(1.0):
+                try:
+                    self.tick()
+                except Exception:                              # noqa: BLE001
+                    pass
+        self._thread = threading.Thread(target=loop, daemon=True, name="job-queue")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
+# --------------------------------------------------------------------------- #
 # HTTP 层
 # --------------------------------------------------------------------------- #
 INDEX = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -477,6 +622,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "error": "unauthorized"})
                 return
             self._json(200, self.service.status())
+        elif path == "/jobs":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            jobs = self.queue.list() if self.queue else []
+            self._json(200, {"ok": True, "count": len(jobs), "jobs": jobs})
         elif path == "/device":
             if not self._authorized():
                 self._json(401, {"ok": False, "error": "unauthorized"})
@@ -491,6 +642,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         else:
             self._json(404, {"ok": False, "error": "not found"})
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        if path.startswith("/jobs/"):
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            job_id = path[len("/jobs/"):]
+            ok = bool(self.queue and self.queue.cancel(job_id))
+            self._json(200 if ok else 404, {"ok": ok})
+            return
+        self._json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -508,6 +671,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
             except Exception as exc:                                # noqa: BLE001
                 self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        # 定时任务
+        if path == "/jobs":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                req = self._read_json()
+                if not (req.get("text") or req.get("image") or req.get("kind") == "feed"):
+                    raise ValueError("任务里没有可打印的内容（text/image）")
+                if self.queue is None:
+                    raise ValueError("队列未启动")
+                self._json(201, {"ok": True, "job": self.queue.add(req)})
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
             return
 
         # 走纸（精确按毫米）
@@ -558,6 +737,8 @@ def main(argv=None) -> int:
     ap.add_argument("--port", type=int, default=8100)
     ap.add_argument("--api-key", default=os.environ.get("MEMOBIRD_API_KEY", ""),
                     help="可选的访问口令（请求头 X-Api-Key 或 ?key=）")
+    ap.add_argument("--jobs-file", default="",
+                    help="定时任务落盘文件（默认不落盘）")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -566,14 +747,18 @@ def main(argv=None) -> int:
         return 2
 
     service = PrintService(args.backend, args.target, verbose=args.verbose)
+    queue = JobQueue(service, persistence=args.jobs_file or None)
+    queue.start()
     Handler.service = service
+    Handler.queue = queue
     Handler.api_key = args.api_key or None
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
     print(f"打印服务 {VERSION}  后端={args.backend} 目标={args.target or '-'}")
     print(f"  页面： http://{shown}:{args.port}/")
-    print(f"  API ： POST /print   GET /health  GET /status")
+    print(f"  API ： POST /print   POST /feed   GET /device   GET /health   GET /status")
+    print(f"        定时：POST /jobs {{\"text\":\"…\",\"delaySec\":60}}   GET /jobs   DELETE /jobs/<id>")
     if Handler.api_key:
         print("  已启用 API key（X-Api-Key 或 ?key=）")
     try:

@@ -17,6 +17,7 @@ import io
 import json
 import os
 import sys
+import time
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -183,6 +184,37 @@ srv.shutdown()
 srv.server_close()
 
 # --------------------------------------------------------------------------- #
+# ---------------------------------------------------------------- 定时任务
+queue = ps.JobQueue(service)
+job = queue.add({"text": "定时", "delaySec": 0})
+check("任务入队为 pending", job["status"] == "pending", job["status"])
+check("定时任务默认开缺纸预检", job["req"].get("checkPaper") is True)
+check("tick 执行到点任务", queue.tick() == 1)
+check("执行后 done", queue.list()[0]["status"] == "done", queue.list()[0]["status"])
+check("记录了 printedAt", queue.list()[0]["printedAt"] is not None)
+
+# 缺纸 → deferred（不丢任务，稍后重试）
+orig = service.paper_state
+service.paper_state = lambda: True
+job2 = queue.add({"text": "缺纸时", "delaySec": 0})
+queue.tick()
+j2 = [j for j in queue.list() if j["id"] == job2["id"]][0]
+check("缺纸 → deferred", j2["status"] == "deferred", j2["status"])
+check("deferred 有原因", "缺纸" in (j2["lastError"] or ""), j2["lastError"])
+check("deferred 会自动重排时间", j2["due"] > time.time())
+service.paper_state = orig
+
+# 重复任务：执行后回到 pending
+job3 = queue.add({"text": "每天", "repeatSec": 3600})
+queue.tick()
+j3 = [j for j in queue.list() if j["id"] == job3["id"]][0]
+check("重复任务执行后仍 pending", j3["status"] == "pending", j3["status"])
+check("重复任务下次时间往后推", j3["due"] > time.time())
+
+# 取消
+check("取消存在的任务", queue.cancel(job3["id"]) is True)
+check("取消不存在的任务返回 False", queue.cancel("nope") is False)
+
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

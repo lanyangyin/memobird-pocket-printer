@@ -290,9 +290,11 @@ def cmd_print(args) -> int:
                         pw, ph, praw = dither_to_raw(page, args.mode)
                         pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
                                                     chunk=getattr(args, "bmp_chunk", 1024))
-                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03,
-                                            wait_ack=True,
-                                            flow_control=not getattr(args, "no_flow", False))
+                        await b.send_frames(
+                            pjob.frames, preheat=preheat,
+                            inter_frame=getattr(args, "inter_frame", 0.03),
+                            wait_ack=True,
+                            flow_control=not getattr(args, "no_flow", False))
                         if len(pages) > 1:
                             print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph / 8:.1f}mm)", file=sys.stderr)
                             # 每页后给固件一个"结束"信号（状态查询，零走纸）
@@ -519,6 +521,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
+        p.add_argument("--inter-frame", type=float, default=0.03,
+                       help="帧间固定间隔（秒）；0.2~0.4 可让出纸连续又不丢数据")
         p.add_argument("--window", type=int, default=1,
                        help="流控窗口（1=每帧等 ack，最稳但纸会一顿一顿；>1 可能丢数据）")
         p.add_argument("--no-paginate", action="store_true",

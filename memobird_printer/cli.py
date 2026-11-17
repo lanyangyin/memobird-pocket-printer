@@ -226,7 +226,8 @@ def cmd_print(args) -> int:
 
             async with BlePrinter(args.ble, chunk=getattr(args, "chunk", 180),
                                   settle=getattr(args, "settle", 0.002),
-                                  batch=getattr(args, "batch", 1)) as b:
+                                  batch=getattr(args, "batch", 1),
+                                  window=getattr(args, "window", 1)) as b:
                 preheat = not getattr(args, "no_preheat", False)
 
                 # 降浓度 = 每行加热更久 = 打印变慢 → 慢速 BLE 下长图才打得完整
@@ -518,6 +519,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
+        p.add_argument("--window", type=int, default=1,
+                       help="流控窗口（1=每帧等 ack，最稳但纸会一顿一顿；>1 可能丢数据）")
         p.add_argument("--no-paginate", action="store_true",
                        help="不按 400 行分页，整张一次发（排查固件上限用）")
         p.add_argument("--exact", action="store_true",

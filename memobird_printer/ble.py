@@ -48,7 +48,7 @@ class BlePrinter:
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
                  settle: float = 0.02, timeout: float = 15.0, echo: bool = True,
-                 chunk: int = 180, batch: int = 1):
+                 chunk: int = 180, batch: int = 1, window: int = 1):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
@@ -56,7 +56,8 @@ class BlePrinter:
         self.timeout = timeout
         self.echo = echo
         self.chunk = max(20, int(chunk))     # 每次 GATT 写入的字节数
-        self.batch = max(1, int(batch))      # 并发写入数：>1 时不等上一片写完，显著提速
+        self.batch = max(1, int(batch))
+        self.window = max(1, int(window))    # 流控窗口：始终有几帧在固件缓冲里      # 并发写入数：>1 时不等上一片写完，显著提速
         self._client = None
         self._rx = bytearray()          # 通知分片的接收缓冲
         self._notifies: list[bytes] = []   # 已重组成完整帧
@@ -185,7 +186,11 @@ class BlePrinter:
         for i, f in enumerate(frames, 1):
             await self.write(f)
             if flow_control:
-                await self.wait_ack_at(i, timeout=2.5)
+                # 窗口流控：只等"窗口之外"的那一帧，保证固件缓冲里始终有几帧，
+                # 电机就不会走走停停（逐帧等待会让纸一顿一顿的）
+                behind = i - self.window + 1
+                if behind >= 1:
+                    await self.wait_ack_at(behind, timeout=2.5)
             elif inter_frame:
                 await asyncio.sleep(inter_frame)
         if wait_ack and not flow_control:

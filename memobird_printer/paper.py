@@ -55,8 +55,11 @@ def blank_raw(width: int, height: int, *, tick: bool = False) -> bytes:
 
 def content_dots_for_total(total_mm: float, dpi: int = 203,
                            overhead_mm: float = OVERHEAD_MM) -> int:
-    """想要纸总长 total_mm，内容该画多少点（扣掉固件固定多喂的 18mm）。"""
-    return max(1, mm_to_dots(max(1.0, total_mm - overhead_mm), dpi))
+    """想要纸总长 total_mm，内容该画多少点（扣掉固件固定多喂的 18mm）。
+
+    物理下限就是那 18mm 本身（11 上 + 7 下）：再小也只能出约 18mm 纸。
+    """
+    return max(1, mm_to_dots(max(0.0, total_mm - overhead_mm), dpi))
 
 
 def blank_frames(mm: float | None = None, *, dots: int | None = None, width: int = 384,

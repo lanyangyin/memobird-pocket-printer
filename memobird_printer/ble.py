@@ -154,17 +154,41 @@ class BlePrinter:
             await asyncio.sleep(0.05)
         return False
 
+    async def wait_ack_at(self, index: int, timeout: float = 2.0) -> bool:
+        """等固件 ack 到第 index 帧（1-based）。"""
+        loop = asyncio.get_event_loop()
+        end = loop.time() + timeout
+        while loop.time() < end:
+            for f in list(self._notifies):
+                parsed = packet.parse_frame(f)
+                if not parsed or parsed[0] != packet.CMD_PRINT:
+                    continue
+                tlv = packet.parse_tlv(parsed[1])
+                if int.from_bytes(tlv.get(0x0C, b"\0\0"), "little") >= index:
+                    return True
+            await asyncio.sleep(0.02)
+        return False
+
     async def send_frames(self, frames: Iterable[bytes], *, preheat: bool = False,
-                          inter_frame: float = 0.05, wait_ack: bool = False) -> None:
+                          inter_frame: float = 0.05, wait_ack: bool = False,
+                          flow_control: bool = False) -> None:
+        """发送打印帧。
+
+        flow_control=True：**每帧都等固件 ack 了再发下一帧**。
+        实测不加流控时，我们一口气推 24KB，固件缓冲装不下会丢帧，
+        打出来的图会被"压缩"（20mm 到 50mm 之间只剩 5mm）。
+        """
         frames = list(frames)
         if preheat:
             await self.write(packet.preheat_frames())
             await asyncio.sleep(0.1)
-        for f in frames:
+        for i, f in enumerate(frames, 1):
             await self.write(f)
-            if inter_frame:
+            if flow_control:
+                await self.wait_ack_at(i, timeout=2.5)
+            elif inter_frame:
                 await asyncio.sleep(inter_frame)
-        if wait_ack:
+        if wait_ack and not flow_control:
             # 等最后一帧被 ack 再发终结帧，否则打印会被截断
             await self.wait_last_ack(len(frames))
 

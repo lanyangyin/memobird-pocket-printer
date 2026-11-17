@@ -289,7 +289,8 @@ def cmd_print(args) -> int:
                         pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
                                                     chunk=getattr(args, "bmp_chunk", 1024))
                         await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03,
-                                            wait_ack=True)
+                                            wait_ack=True,
+                                            flow_control=not getattr(args, "no_flow", False))
                         if len(pages) > 1:
                             print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph / 8:.1f}mm)", file=sys.stderr)
                             # 每页后给固件一个"结束"信号（状态查询，零走纸）
@@ -515,6 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
+        p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
         p.add_argument("--exact", action="store_true",
                        help="内容结束立刻停：不补白、不打后走纸、不发终结帧（可能打不出大图）")
         p.add_argument("--terminator", default="commit",

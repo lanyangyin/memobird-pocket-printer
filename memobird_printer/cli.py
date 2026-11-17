@@ -290,11 +290,22 @@ def cmd_print(args) -> int:
                         pw, ph, praw = dither_to_raw(page, args.mode)
                         pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
                                                     chunk=getattr(args, "bmp_chunk", 1024))
+                        from .paper import FAST_PATH_FRAMES
+
+                        # 自动选节奏：短内容用快速路径（连续、不顿），长内容必须流控（否则丢数据）
+                        n_frames = len(pjob.frames)
+                        auto_fast = n_frames <= FAST_PATH_FRAMES
+                        use_flow = (not auto_fast) and (not getattr(args, "no_flow", False))
+                        if getattr(args, "no_flow", False):
+                            use_flow = False
+                        print(f"  {n_frames} 帧 → "
+                              f"{'快速路径（连续）' if not use_flow else '流控（完整但会顿）'}",
+                              file=sys.stderr)
                         await b.send_frames(
                             pjob.frames, preheat=preheat,
                             inter_frame=getattr(args, "inter_frame", 0.03),
                             wait_ack=True,
-                            flow_control=not getattr(args, "no_flow", False))
+                            flow_control=use_flow)
                         if len(pages) > 1:
                             print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph / 8:.1f}mm)", file=sys.stderr)
                             # 每页后给固件一个"结束"信号（状态查询，零走纸）

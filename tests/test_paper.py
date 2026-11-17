@@ -96,7 +96,9 @@ check("总长 40mm → 内容 176 点", paper.content_dots_for_total(40) == 176,
       str(paper.content_dots_for_total(40)))
 check("总长 58mm → 内容 320 点（= 实机 40mm 图那张）",
       paper.content_dots_for_total(58) == 320, str(paper.content_dots_for_total(58)))
-check("总长小于 18mm 时，内容取最小 1mm = 8 点", paper.content_dots_for_total(10) == 8,
+check("总长 18mm（11+7）时内容取最小 1 行 = 8 点", paper.content_dots_for_total(18) == 8,
+      str(paper.content_dots_for_total(18)))
+check("总长小于 18mm 也按 18mm 算", paper.content_dots_for_total(10) == 8,
       str(paper.content_dots_for_total(10)))
 f40, m40 = paper.blank_frames(mm=40, total=True)
 check("blank_frames(total) 内容 = 22mm", m40["dots"] == 176, str(m40["dots"]))

@@ -215,11 +215,18 @@ def cmd_print(args) -> int:
         async def run():
             from .ble import BlePrinter
 
-            async with BlePrinter(args.ble) as b:
+            async with BlePrinter(args.ble, chunk=getattr(args, "chunk", 20),
+                                  settle=getattr(args, "settle", 0.02)) as b:
+                preheat = not getattr(args, "no_preheat", False)
                 if getattr(args, "text", None) and not _image_path(args):
-                    await b.print_text(getattr(args, "text", None) or "")
+                    job = packet.job_for_text(getattr(args, "text", None) or "")
                 else:
-                    await b.print_raw_image(raw)
+                    job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True))
+                await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
+                # 图片帧没有结束标记，补一帧换行当终结（网页实现一直这么做）
+                if not (getattr(args, "text", None) and not _image_path(args)):
+                    await asyncio.sleep(0.3)
+                    await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
         asyncio.run(run())
         print("已发送")
         return 0
@@ -404,6 +411,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="整张纸正好 N 毫米（内容补白/裁切到该高度）")
         p.add_argument("--align", default="top", choices=["top", "center", "bottom"],
                        help="补白时内容放哪（默认 top）")
+        p.add_argument("--no-preheat", action="store_true", help="不发热身包（排查用）")
+        p.add_argument("--chunk", type=int, default=20, help="GATT 每次写入字节数（默认 20）")
+        p.add_argument("--settle", type=float, default=0.02, help="每片之后停顿（秒）")
         return p
 
     # preview / text：位置参数是文本

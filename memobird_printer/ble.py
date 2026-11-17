@@ -47,13 +47,15 @@ class BlePrinter:
     backend = "ble"
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
-                 settle: float = 0.02, timeout: float = 15.0, echo: bool = True):
+                 settle: float = 0.02, timeout: float = 15.0, echo: bool = True,
+                 chunk: int = 20):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
         self.settle = settle
         self.timeout = timeout
         self.echo = echo
+        self.chunk = max(20, int(chunk))     # 每次 GATT 写入的字节数（实测 20 最稳，见浏览器实现）
         self._client = None
         self._rx = bytearray()          # 通知分片的接收缓冲
         self._notifies: list[bytes] = []   # 已重组成完整帧
@@ -110,8 +112,9 @@ class BlePrinter:
     async def write(self, data: bytes) -> None:
         """按 MTU 切片写入（write-without-response 更快，失败回退 write-with-response）。"""
         assert self._client is not None
-        mtu = getattr(self._client, "mtu_size", None) or 23
-        step = max(20, mtu - 3)
+        # 实测：按 MTU-3（Windows 协商到 490 → 487B）写入时，图片帧会被截断：
+        # 固件仍逐包 ack，但内容残缺 → 图不打印。浏览器实现一直用 20B，是稳的。
+        step = self.chunk
         for i in range(0, len(data), step):
             chunk = data[i:i + step]
             try:
@@ -177,9 +180,17 @@ class BlePrinter:
         job = packet.build_text_job(text, encoding=encoding)
         await self.send_frames(job.frames, preheat=True)
 
-    async def print_raw_image(self, raw: bytes, *, preheat: bool = True) -> None:
+    async def print_raw_image(self, raw: bytes, *, preheat: bool = True, feed: bool = True) -> None:
+        """打印 1bpp 裸位图。
+
+        feed=True 时在图片帧后补一帧纯换行 —— 网页实现一直这么做，
+        而图片帧本身没有"结束标记"，实测不补这帧固件不会真正出纸。
+        """
         job = packet.build_bitmap_job(raw)
         await self.send_frames(job.frames, preheat=preheat)
+        if feed:
+            await asyncio.sleep(0.3)
+            await self.send_frames(packet.feed_job(3).frames, preheat=False)
 
 
 async def scan(timeout: float = 8.0, *, all_devices: bool = False) -> list[dict]:

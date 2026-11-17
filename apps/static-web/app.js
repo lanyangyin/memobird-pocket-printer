@@ -34,6 +34,8 @@ function loadImage(src) {
 }
 
 /* --------------------------------------------------------------- 请求体 */
+const totalMm = () => parseFloat($('#total-mm').value) || 0;
+
 const textReq = () => ({
   kind: 'text',
   text: $('#text').value,
@@ -45,6 +47,7 @@ const textReq = () => ({
   format: $('#fmt-text').value,
   darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
+  totalMm: totalMm(),
 });
 
 const imageReq = () => ({
@@ -55,6 +58,7 @@ const imageReq = () => ({
   vflip: $('#vflip').checked,
   darken: parseInt($('#darken-image').value, 10),
   feed: $('#feed').checked,
+  totalMm: totalMm(),
 });
 
 /* --------------------------------------------------------------- 编码 */
@@ -94,7 +98,15 @@ async function encode(req) {
     for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
   }
 
-  const d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
+  let d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
+
+  // 纸总长：内容高度 = 总长 - 固件固定的 18mm
+  if (req.totalMm) {
+    const targetH = E.contentDotsForTotal(parseFloat(req.totalMm), 203);
+    d = E.padRaw(d.raw, d.w, d.h, targetH);
+    log(`纸总长 ${req.totalMm}mm：内容 ${d.h} 点 (${(d.h / 8).toFixed(1)}mm) + 固件 18mm`, 'ok');
+  }
+
   const job = E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true, topDown: !req.vflip });
   if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
   job.raw = d.raw;
@@ -110,12 +122,28 @@ async function preview(req) {
 async function print(req, label) {
   if (!link.connected) { log('先点「连接打印机」', 'warn'); return; }
   const job = await encode(req);
+
+  // 浓度：低浓度打印更慢 → 慢速 BLE 下长图才打得完整
+  const dens = parseInt($('#density').value, 10) || 0;
+  let restore = null;
+  if (dens) {
+    try {
+      restore = await link.getDensity();
+      await link.setDensity(dens);
+      log(`浓度 ${restore} → ${dens}（打完恢复）`, 'ok');
+    } catch (e) { log('设浓度失败：' + (e.message || e), 'warn'); }
+  }
   $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;
   await link.sendJob(job, label, {
     chunk: parseInt($('#chunk').value, 10),
     preheat: $('#preheat').checked,
     onProgress: (r) => setProgress($('#bar'), r),
   });
+
+  if (dens && restore != null) {
+    try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }
+    catch (e) { log('恢复浓度失败：' + (e.message || e), 'warn'); }
+  }
 }
 
 /* --------------------------------------------------------------- 事件 */

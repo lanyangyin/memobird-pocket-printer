@@ -110,6 +110,19 @@
       </div>
       <div class="row">
         <label>走纸 <input id="feed-mm" type="number" value="20" min="1" max="500" step="1"> mm</label>
+        <label>纸总长 <input id="total-mm" type="number" min="20" max="500" step="1" placeholder="留空=不限"> mm</label>
+        <label>浓度
+          <select id="density">
+            <option value="0">默认(10)</option>
+            <option value="3">3（最浅/最慢）</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6" selected>6（推荐长图）</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="10">10（最深/最快）</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
         <button id="btn-feed" class="ghost">走纸</button>

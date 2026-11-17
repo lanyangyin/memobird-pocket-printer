@@ -390,6 +390,27 @@
   }
 
 
+
+  /**
+   * 把 1bpp 裸位图补到目标高度（顶部对齐，其余留白）。
+   * 用途：纸总长 = 内容 + 固件固定 18mm，所以要 N mm 的纸，内容只画 N-18。
+   */
+  function padRaw(raw, w, h, targetH) {
+    const rowBytes = (w + 7) >> 3;
+    const th = Math.max(1, Math.round(targetH));
+    if (th === h) return { raw, w, h };
+    if (th < h) return { raw: raw.slice(0, rowBytes * th), w, h: th };
+    const out = new Uint8Array(rowBytes * th);
+    out.set(raw.subarray(0, Math.min(raw.length, rowBytes * h)), 0);
+    return { raw: out, w, h: th };
+  }
+
+  /** 纸总长（mm）→ 内容应有的点数（扣掉固件固定多喂的 18mm） */
+  function contentDotsForTotal(totalMm, dpi) {
+    const perMm = (dpi || 203) <= 203 ? 8 : 11.811;
+    return Math.max(1, Math.round(Math.max(1, totalMm - 18) * perMm));
+  }
+
   /**
    * 走纸任务：一张全白位图，高 = mm × 8 点（203dpi）。
    * tick=true 时在第 1 行画 1 个黑点，避免固件把全白当"没东西要打"而跳过。
@@ -427,6 +448,6 @@
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
     ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
-    jobFromRaw, jobFromText, blankJob, utf8ToGray,
+    jobFromRaw, jobFromText, blankJob, padRaw, contentDotsForTotal, utf8ToGray,
   };
 });

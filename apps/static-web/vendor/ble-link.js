@@ -206,6 +206,20 @@
       return out;
     }
 
+
+    /** 读当前打印浓度（tag 0x02），读不到返回 null */
+    async function getDensity() {
+      const infos = await readDeviceInfo(1200);
+      const last = infos[infos.length - 1];
+      const f = last && last.fields.find((x) => x.tag === 0x02);
+      return f ? f.int : null;
+    }
+
+    /** 写打印浓度（1..10）。浓度低 → 打印慢 → 慢速 BLE 下长图才打得完整 */
+    async function setDensity(n) {
+      await query(BLE.settingFrame(0x02, n), 700);
+    }
+
     /**
      * 开关指示灯（cmd 0x03, tag 0x03 —— 实机验证过因果）
      * @returns {Promise<number|null>} 读回的状态值（1 亮 / 0 灭）
@@ -228,7 +242,7 @@
 
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
-      servicesWithFallback, query, readDeviceInfo, setLed,
+      servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
       get connected() { return state.connected; },
     };
   }

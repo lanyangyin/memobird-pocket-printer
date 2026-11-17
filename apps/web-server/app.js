@@ -25,6 +25,8 @@ async function api(path, body) {
 }
 
 /* --------------------------------------------------------------- 请求体 */
+const totalMm = () => parseFloat($('#total-mm').value) || 0;
+
 const textReq = () => ({
   kind: 'text',
   text: $('#text').value,
@@ -36,6 +38,7 @@ const textReq = () => ({
   format: 'gbk',
   darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
+  totalMm: totalMm(),
 });
 
 const imageReq = () => ({
@@ -47,6 +50,7 @@ const imageReq = () => ({
   vflip: $('#vflip').checked,
   darken: parseInt($('#darken-image').value, 10),
   feed: $('#feed').checked,
+  totalMm: totalMm(),
 });
 
 /* --------------------------------------------------------------- 预览 */
@@ -67,16 +71,35 @@ function jobFromApi(j) {
 
 async function printApi(path, req, label) {
   if (!link.connected) { log('先点「连接打印机」', 'warn'); return; }
-  const j = await api(path, req);
-  $('#meta').textContent = j.meta
-    ? `${j.meta.format} · ${j.meta.bytes}B · ${j.meta.chunks}帧 · ${j.meta.width}×${j.meta.height}`
-    : '';
-  const chunk = parseInt($('#chunk').value, 10);
-  await link.sendJob(jobFromApi(j), label, {
-    chunk,
-    preheat: $('#preheat').checked,
-    onProgress: (r) => setProgress($('#bar'), r),
-  });
+
+  // 浓度：低浓度打印更慢 → 长图在慢速 BLE 下才完整
+  const dens = parseInt($('#density').value, 10) || 0;
+  let restore = null;
+  if (dens) {
+    try {
+      restore = await link.getDensity();
+      await link.setDensity(dens);
+      log(`浓度 ${restore} → ${dens}（打完恢复）`, 'ok');
+    } catch (e) { log('设浓度失败：' + (e.message || e), 'warn'); }
+  }
+
+  try {
+    const j = await api(path, req);
+    $('#meta').textContent = j.meta
+      ? `${j.meta.format} · ${j.meta.bytes}B · ${j.meta.chunks}帧 · ${j.meta.width}×${j.meta.height}`
+      : '';
+    const chunk = parseInt($('#chunk').value, 10);
+    await link.sendJob(jobFromApi(j), label, {
+      chunk,
+      preheat: $('#preheat').checked,
+      onProgress: (r) => setProgress($('#bar'), r),
+    });
+  } finally {
+    if (dens && restore != null) {
+      try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }
+      catch (e) { log('恢复浓度失败：' + (e.message || e), 'warn'); }
+    }
+  }
 }
 
 /* --------------------------------------------------------------- 事件 */

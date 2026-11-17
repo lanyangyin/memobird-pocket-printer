@@ -99,6 +99,21 @@ for (const [mm, dots, bytes, chunks] of [[20, 160, 7742, 8], [50, 400, 19262, 19
 const tickJob = enc.blankJob(10, { tick: true });
 check('tick 会把首个字节置 0x80', tickJob.frames.length > 0, true);
 
+
+/* ------------------------------------------------------ 10. 纸总长补偿 */
+console.log('\n10) 纸总长（内容 = 总长 - 固件 18mm）');
+for (const [mm, dots] of [[40, 176], [58, 320], [20, 16], [100, 656]]) {
+  const got = enc.contentDotsForTotal(mm);
+  check(`${mm}mm → 内容 ${dots} 点`, got, dots);
+}
+const padded = enc.padRaw(new Uint8Array(48 * 96), 384, 96, 176);
+check('padRaw 补高到 176', padded.h, 176);
+check('padRaw 长度 = 48×176', padded.raw.length, 48 * 176);
+check('补出的部分是白色（全零）', padded.raw[48 * 96] === 0, true);
+const trim = enc.padRaw(new Uint8Array(48 * 200), 384, 200, 176);
+check('超过目标时裁切', trim.h, 176);
+check('裁切后长度正确', trim.raw.length, 48 * 176);
+
 /* ------------------------------------------------------------------ 汇总 */
 console.log(`\n通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);
 process.exit(failed ? 1 : 0);

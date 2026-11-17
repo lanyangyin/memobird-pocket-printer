@@ -22,7 +22,7 @@ TLV = TAG(1B) + LEN(2B little-endian) + VALUE
 
 常用 CMD:
     0x01  查询状态（电量/版本/SN）
-    0x03  控制（指示灯、打印浓度、自动关机）
+    0x03  控制（指示灯、打印浓度）
     0x04  打印
 """
 from __future__ import annotations

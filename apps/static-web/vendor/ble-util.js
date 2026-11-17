@@ -121,13 +121,13 @@
   const DEVICE_TAGS = {
     0xff: { name: 'magic', label: '固定 0x01', confirmed: false },
     0x01: { name: 'constant_23', label: '恒定 23(非温度非电量)', confirmed: false },
-    0x02: { name: 'auto_off_minutes', label: '自动关机(分钟)', confirmed: false },
+    0x02: { name: 'density', label: '打印浓度(1..10)', confirmed: true },
     0x03: { name: 'led', label: '指示灯', confirmed: true },
-    0x04: { name: 'voltage_step', label: '电压类(随负载变)', confirmed: false },
+    0x04: { name: 'battery_voltage', label: '电池电压(0.05V/LSB)', confirmed: true },
     0x05: { name: 'flag_05', label: '状态位', confirmed: false },
     0x06: { name: 'paper_out', label: '缺纸', confirmed: true },  // 双向验证
     0x0f: { name: 'serial', label: '序列号', confirmed: true },
-    0x13: { name: 'flags_13', label: '标志位', confirmed: false },
+    0x13: { name: 'flags_13', label: '标志位(重启会变)', confirmed: false },
     0x14: { name: 'counter_14', label: '8 字节计数?', confirmed: false },
   };
 

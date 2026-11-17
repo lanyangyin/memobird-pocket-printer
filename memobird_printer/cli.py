@@ -248,22 +248,11 @@ def cmd_print(args) -> int:
                     job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True),
                                                chunk=getattr(args, "bmp_chunk", 1024))
                 else:
-                    from .paper import MAX_ROWS_PER_JOB, paginate
-
-                    pages = paginate(args._gray)
-                    if len(pages) > 1:
-                        print(f"图高 {args._gray.size[1]} 行 > 单任务上限 {MAX_ROWS_PER_JOB} 行 → 分 {len(pages)} 页",
-                              file=sys.stderr)
-                    for n, page in enumerate(pages, 1):
-                        pw, ph, praw = dither_to_raw(page, args.mode)
-                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
-                                                    chunk=getattr(args, "bmp_chunk", 1024))
-                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03)
-                        if len(pages) > 1:
-                            print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph/8:.1f}mm)", file=sys.stderr)
-                            await asyncio.sleep(0.5)
+                    # 位图（含中文/图片）统一在下面按"分段/分页"处理，这里不建 job
+                    job = None
                 seg_mm = getattr(args, "segment_mm", 0) or 0
-                if seg_mm > 0 and not (getattr(args, "text", None) and not _image_path(args)):
+                is_text = bool(text_arg) and not _image_path(args)
+                if seg_mm > 0 and not is_text:
                     from .paper import split_image
 
                     pieces = split_image(args._gray, seg_mm)
@@ -276,6 +265,23 @@ def cmd_print(args) -> int:
                         await b.send_frames(packet.feed_job(1).frames, preheat=False)
                         print(f"  段 {n}/{len(pieces)}  {ph} 点 ({ph/8:.1f}mm)")
                         await asyncio.sleep(0.35)
+                elif not is_text:
+                    from .paper import MAX_ROWS_PER_JOB, paginate
+
+                    pages = paginate(args._gray)
+                    if len(pages) > 1:
+                        print(f"图高 {args._gray.size[1]} 行 > 单任务上限 {MAX_ROWS_PER_JOB} 行 "
+                              f"→ 分 {len(pages)} 页（页间有固件 18mm 空隙）", file=sys.stderr)
+                    for n, page in enumerate(pages, 1):
+                        pw, ph, praw = dither_to_raw(page, args.mode)
+                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
+                                                    chunk=getattr(args, "bmp_chunk", 1024))
+                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03)
+                        if len(pages) > 1:
+                            print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph / 8:.1f}mm)", file=sys.stderr)
+                            # 每页后给固件一个"结束"信号（状态查询，零走纸）
+                            await asyncio.sleep(0.3)
+                            await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.5, retries=1)
                 else:
                     await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
                 # 图片帧没有结束标记：用状态查询当终结帧 → 零走纸

@@ -288,7 +288,8 @@ def cmd_print(args) -> int:
                         pw, ph, praw = dither_to_raw(page, args.mode)
                         pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
                                                     chunk=getattr(args, "bmp_chunk", 1024))
-                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03)
+                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03,
+                                            wait_ack=True)
                         if len(pages) > 1:
                             print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph / 8:.1f}mm)", file=sys.stderr)
                             # 每页后给固件一个"结束"信号（状态查询，零走纸）

@@ -134,8 +134,29 @@ class BlePrinter:
                 if self.settle:
                     await asyncio.sleep(self.settle)
 
+    async def wait_last_ack(self, total: int, timeout: float = 3.0) -> bool:
+        """等固件 ack 到第 total 帧（cmd 0x04 ack 里 `0x0C` 是包序）。
+
+        为什么要等：提交帧发得太早时，打印机还没收完最后一帧，
+        结果就是**只打出一半**（实测二维码只出了一半，另一半空着）。
+        """
+        loop = asyncio.get_event_loop()
+        end = loop.time() + timeout
+        while loop.time() < end:
+            for f in list(self._notifies):
+                parsed = packet.parse_frame(f)
+                if not parsed or parsed[0] != packet.CMD_PRINT:
+                    continue
+                tlv = packet.parse_tlv(parsed[1])
+                idx = int.from_bytes(tlv.get(0x0C, b"\0\0"), "little")
+                if idx >= total:
+                    return True
+            await asyncio.sleep(0.05)
+        return False
+
     async def send_frames(self, frames: Iterable[bytes], *, preheat: bool = False,
-                          inter_frame: float = 0.05) -> None:
+                          inter_frame: float = 0.05, wait_ack: bool = False) -> None:
+        frames = list(frames)
         if preheat:
             await self.write(packet.preheat_frames())
             await asyncio.sleep(0.1)
@@ -143,6 +164,9 @@ class BlePrinter:
             await self.write(f)
             if inter_frame:
                 await asyncio.sleep(inter_frame)
+        if wait_ack:
+            # 等最后一帧被 ack 再发终结帧，否则打印会被截断
+            await self.wait_last_ack(len(frames))
 
     # ------------------------------------------------------------------ #
     async def status(self) -> bytes:
@@ -203,7 +227,7 @@ class BlePrinter:
         * "none"   —— 不发：小图能打，**大图会中途断**（实测 23 帧只出第一根刻度）
         """
         job = packet.build_bitmap_job(raw)
-        await self.send_frames(job.frames, preheat=preheat)
+        await self.send_frames(job.frames, preheat=preheat, wait_ack=True)
         if terminator == "feed":
             await asyncio.sleep(0.3)
             await self.send_frames(packet.feed_job(feed_lines).frames, preheat=False)

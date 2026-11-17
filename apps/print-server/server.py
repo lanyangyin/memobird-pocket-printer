@@ -114,6 +114,9 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
             raise ValueError("image 为空")
         img = prepare(_load_image(data), mode=mode)
 
+    if req.get("exact"):
+        req = {**req, "feed": False, "lengthMm": None, "totalMm": None}
+
     total_mm = req.get("totalMm")
     if total_mm:
         from memobird_printer.paper import pad_to_length

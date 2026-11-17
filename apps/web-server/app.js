@@ -39,6 +39,7 @@ const textReq = () => ({
   darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
   feedLines: parseInt($('#feed-lines').value, 10) || 0,
+  exact: $('#chk-exact').checked,
   totalMm: totalMm(),
 });
 
@@ -105,7 +106,9 @@ async function printApi(path, req, label) {
 
       // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
       // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
+      if (!($('#chk-exact') && $('#chk-exact').checked)) {
       try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
+    }
       if (i < pages.length - 1) await new Promise((r) => setTimeout(r, 400));
     }
   } finally {

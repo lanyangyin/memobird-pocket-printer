@@ -59,6 +59,8 @@ def _make_image(args):
 
     # 整张纸正好 N 毫米：给内容补白（或裁切）到目标高度
     total_mm = getattr(args, "total_mm", None)
+    if getattr(args, "exact", False):
+        total_mm = target_mm = None
     target_mm = getattr(args, "length_mm", None)
     if total_mm or target_mm:
         from .paper import OVERHEAD_MM, pad_to_length
@@ -272,6 +274,14 @@ def cmd_print(args) -> int:
                     if len(pages) > 1:
                         print(f"图高 {args._gray.size[1]} 行 > 单任务上限 {MAX_ROWS_PER_JOB} 行 "
                               f"→ 分 {len(pages)} 页（页间有固件 18mm 空隙）", file=sys.stderr)
+                    if getattr(args, "exact", False):
+                        total_frames = sum(
+                            max(1, (62 + 48 * page.size[1] + 1023) // 1024) for page in pages)
+                        if total_frames > 10:
+                            print(f"⚠ --exact 不发终结帧：本次约 {total_frames} 帧，"
+                                  f"大任务可能打不完整（实测 >20 帧会中途断）；"
+                                  f"要保险就加 --terminator status", file=sys.stderr)
+
                     for n, page in enumerate(pages, 1):
                         pw, ph, praw = dither_to_raw(page, args.mode)
                         pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
@@ -286,7 +296,7 @@ def cmd_print(args) -> int:
                     await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
                 # 图片帧没有结束标记：用状态查询当终结帧 → 零走纸
                 if not (getattr(args, "text", None) and not _image_path(args)):
-                    term = getattr(args, "terminator", "status")
+                    term = "none" if getattr(args, "exact", False) else getattr(args, "terminator", "status")
                     if term == "feed":
                         await asyncio.sleep(0.3)
                         await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
@@ -499,6 +509,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
+        p.add_argument("--exact", action="store_true",
+                       help="内容结束立刻停：不补白、不打后走纸、不发终结帧（可能打不出大图）")
         p.add_argument("--terminator", default="status", choices=["feed", "status", "none"],
                        help="图片的终结帧：status=状态查询(默认，零走纸) / feed=走纸 / none=不发")
         p.add_argument("--segment-mm", type=float, default=0,

@@ -117,16 +117,16 @@ check('裁切后长度正确', trim.raw.length, 48 * 176);
 
 /* ------------------------------------------------------ 11. 大图分页 */
 console.log('\n11) 单任务上限 400 行 → 自动分页');
-check('上限常量 = 400', enc.MAX_ROWS_PER_JOB, 400);
-for (const [h, n] of [[320, 1], [400, 1], [480, 2], [1000, 3]]) {
+check('分页阈值 = 1200', enc.MAX_ROWS_PER_JOB, 1200);
+for (const [h, n] of [[320, 1], [400, 1], [800, 1], [1300, 2]]) {
   const pages = enc.paginateRaw(new Uint8Array(48 * h), 384, h);
   check(`${h} 行 → ${n} 页`, pages.length, n);
 }
-const p1000 = enc.paginateRaw(new Uint8Array(48 * 1000), 384, 1000);
-check('分页后总行数守恒', p1000.reduce((a, p) => a + p.h, 0), 1000);
+const p1000 = enc.paginateRaw(new Uint8Array(48 * 2600), 384, 2600);
+check('分页后总行数守恒', p1000.reduce((a, p) => a + p.h, 0), 2600);
 check('每页宽度不变', p1000.every((p) => p.w === 384), true);
-check('首页行数 = 400', p1000[0].h, 400);
-check('首页字节 = 48×400', p1000[0].raw.length, 48 * 400);
+check('首页行数 = 1200', p1000[0].h, 1200);
+check('首页字节 = 48×1200', p1000[0].raw.length, 48 * 1200);
 
 /* ------------------------------------------------------------------ 汇总 */
 console.log(`\n通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);

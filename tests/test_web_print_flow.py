@@ -215,13 +215,13 @@ def main() -> int:
 
         # 4. 超高内容 → 自动分页（用 lengthMm 造一张 900 行的图，避开 canvas 解码）
         pages = cdp.eval("""(async () => {
-          const j = await encode({kind:'text', text:'X', format:'bmp', totalMm:130.5});
+          const j = await encode({kind:'text', text:'X', format:'bmp', totalMm:318});
           const ps = j.pages || [j];
           return {rows: j.meta.height, pages: ps.length, pagesH: ps.map(p => p.meta.height)};
         })()""")
-        check("900 行内容", pages["rows"], 900)
-        check("900 行 → 3 页", pages["pages"], 3)
-        check("分页高度 400/400/100", pages["pagesH"], [400, 400, 100])
+        check("2400 行内容", pages["rows"], 2400)
+        check("2400 行 → 2 页", pages["pages"], 2)
+        check("分页高度 1200/1200", pages["pagesH"], [1200, 1200])
 
         # 5. 浓度包裹 + 终结帧
         cdp.eval("""(() => {
@@ -244,12 +244,12 @@ def main() -> int:
         cdp.eval("window.__CAP__.jobs.length = 0; true", await_promise=False)
         cdp.eval("""(async () => {
           document.querySelector('#density').value = '0';
-          await print({kind:'text', text:'X', format:'bmp', totalMm:130.5}, 'T6');
+          await print({kind:'text', text:'X', format:'bmp', totalMm:318}, 'T6');
           return true;
         })()""")
         jobs = json.loads(cdp.eval("JSON.stringify(window.__CAP__.jobs)"))
-        check("900 行图 → 分 3 次发送", len(jobs), 3)
-        check("每页的行数在上限内", all(j["height"] <= 400 for j in jobs), True)
+        check("2400 行图 → 分 2 次发送", len(jobs), 2)
+        check("每页的行数在上限内", all(j["height"] <= 1200 for j in jobs), True)
     finally:
         cdp.close()
         if not keep:
@@ -299,12 +299,12 @@ def main() -> int:
             # 超高图 → 接口返回 pages，页面逐页发
             tall = cdp2.eval("""(async () => {
               const r = await fetch('/api/encode', {method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({kind:'text', text:'X', format:'bmp', lengthMm:100})});
+                body: JSON.stringify({kind:'text', text:'X', format:'bmp', lengthMm:250})});
               const j = await r.json();
               return {pages: (j.pages||[]).length, heights: (j.pages||[]).map(p => p.meta.height)};
             })()""")
-            check("接口：100mm 图分 2 页", tall["pages"], 2)
-            check("接口：页高 400 + 400", tall["heights"], [400, 400])
+            check("接口：250mm 图分 2 页", tall["pages"], 2)
+            check("接口：页高 1200 + 800", tall["heights"], [1200, 800])
         finally:
             cdp2.close()
             if not keep:

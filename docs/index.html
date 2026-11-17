@@ -1314,8 +1314,9 @@ footer {
 
 
 
-  /** 单任务能完整打出的最大高度（实机二分：400 行 50mm 可以，480 行不行） */
-  const MAX_ROWS_PER_JOB = 400;
+  /** 分页阈值（与 Python 的 paper.MAX_ROWS_PER_JOB 一致）。
+   注：早期"400 行上限"是丢数据的假象，修好流控后 800 行也能单任务完整打。 */
+  const MAX_ROWS_PER_JOB = 1200;
 
   /** 把裸位图按高度切成多页（每页 ≤ maxRows 行），返回 [{raw,w,h}] */
   function paginateRaw(raw, w, h, maxRows) {

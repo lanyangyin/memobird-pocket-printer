@@ -190,6 +190,34 @@
     return out;
   }
 
+
+  // ---- 电量：0x04 是电池电压（0.05 V/LSB），用锂电静置曲线估算百分比 ----
+  const VOLTS_PER_LSB = 0.05;
+  const LI_CURVE = [
+    [3.30, 0], [3.40, 3], [3.50, 8], [3.60, 14], [3.70, 25],
+    [3.75, 35], [3.80, 45], [3.85, 53], [3.90, 60], [3.95, 68],
+    [4.00, 75], [4.05, 83], [4.10, 90], [4.15, 96], [4.20, 100],
+  ];
+
+  function batteryVoltage(parsed) {
+    if (!parsed) return null;
+    const f = parsed.fields.find((x) => x.tag === 0x04);
+    return f ? +(f.int * VOLTS_PER_LSB).toFixed(2) : null;
+  }
+
+  function batteryPercent(parsed) {
+    const v = batteryVoltage(parsed);
+    if (v == null) return null;
+    if (v <= LI_CURVE[0][0]) return 0;
+    if (v >= LI_CURVE[LI_CURVE.length - 1][0]) return 100;
+    for (let i = 0; i < LI_CURVE.length - 1; i++) {
+      const [v1, p1] = LI_CURVE[i];
+      const [v2, p2] = LI_CURVE[i + 1];
+      if (v >= v1 && v <= v2) return Math.round(p1 + ((p2 - p1) * (v - v1)) / (v2 - v1));
+    }
+    return null;
+  }
+
   /** 缺纸？（tag 0x06：有纸 0 / 缺纸 1；实机验证过） */
   function paperOut(parsed) {
     if (!parsed) return null;
@@ -232,7 +260,7 @@
     serviceCharacteristics, collectCharacteristics, pickWrite, parseFrame, dumpGatt,
     isWritable, isNotifiable,
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
-    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus, paperOut,
+    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
   };
 });

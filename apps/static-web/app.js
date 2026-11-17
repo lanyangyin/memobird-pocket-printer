@@ -234,7 +234,9 @@ $('#btn-device').addEventListener('click', async () => {
     $('#dev-out').textContent = window.MBBle.formatStatus(f).join('\n');
     const pick = (tag) => { const x = f.fields.find((y) => y.tag === tag); return x ? x.int : '?'; };
     const noPaper = window.MBBle.paperOut(f);
-    log(`设备信息：序列号 ${f.serial || '?'} · 灯=${pick(0x03)} · 0x02=${pick(0x02)}${noPaper === null ? '' : (noPaper ? ' · ⚠ 缺纸' : ' · 有纸')}`, noPaper ? 'warn' : 'ok');
+    const bat = window.MBBle.batteryPercent(f);
+    const volt = window.MBBle.batteryVoltage(f);
+    log(`设备信息：序列号 ${f.serial || '?'} · 灯=${pick(0x03)} · 0x02=${pick(0x02)}${noPaper === null ? '' : (noPaper ? ' · ⚠ 缺纸' : ' · 有纸')}${bat === null ? '' : ` · 电量≈${bat}% (${volt}V)`}`, noPaper ? 'warn' : 'ok');
   } catch (e) { log('读设备信息失败：' + (e.message || e), 'err'); }
 });
 

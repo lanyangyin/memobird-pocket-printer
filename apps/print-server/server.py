@@ -329,8 +329,25 @@ class PrintService:
         with self.lock:
             infos, paper = self.worker.read_info()
         self.last_paper_out = paper
+        from memobird_printer import device as _dev
+
+        raw = None
+        with self.lock:
+            infos, paper = self.worker.read_info()
+        self.last_paper_out = paper
         return {"ok": True, "backend": self.backend, "target": self.target,
-                "paper_out": paper, "device": infos[-1] if infos else None}
+                "paper_out": paper, "battery": self._battery(),
+                "device": infos[-1] if infos else None}
+
+    def _battery(self) -> dict | None:
+        """电压 → 估算电量（0x04 = 电池电压，0.05V/LSB）"""
+        if self.backend != "ble" or not isinstance(self.worker, BleWorker):
+            return None
+        try:
+            infos, _ = self.worker.read_info(timeout=25)
+        except Exception:                                     # noqa: BLE001
+            return None
+        return infos[-1].get("battery") if infos else None
 
     def device_led(self, on: bool) -> dict:
         """开关指示灯（cmd 0x03 tag 0x03）。只有 ble 后端能做。"""

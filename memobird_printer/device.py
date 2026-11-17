@@ -71,8 +71,8 @@ TAGS: dict[int, Tag] = {
               "慢速 BLE（~3KB/s）下反而能完整打完长图"),
     0x03: Tag("led", "指示灯", "setting", True,
               "写 1 亮 / 0 灭，状态同步 —— 因果已用肉眼验证"),
-    0x04: Tag("voltage_step", "电压类读数（0.05V/LSB?）", "sensor", False,
-              "会随负载变：打黑页 81→80，之后自己回来；写入无效"),
+    0x04: Tag("battery_voltage", "电池电压（0.05V/LSB）", "sensor", True,
+              "实测随充电上升(74→80)、随负载下降，是电池电压；可估算电量"),
     0x05: Tag("flag_05", "状态位", "sensor", False, "恒为 1（未观察到变化）"),
     0x06: Tag("paper_out", "缺纸", "sensor", True,
               "双向验证：00:24:39 抽纸 0→1（灯变红），00:28:57 放回 1→0"),
@@ -115,6 +115,13 @@ class DeviceInfo:
                 if val and all(32 <= b < 127 for b in val) else None,
                 "note": meta.note if meta else "",
             }
+
+        # 电量（由 0x04 电压估算）
+        volts = battery_voltage(self)
+        if volts is not None:
+            out["battery"] = {"voltage": volts, "percent": battery_percent(self),
+                              "note": "由 0x04 × 0.05V 估算，±10%，负载时偏低"}
+        out["paper_out"] = paper_out(self)
         return out
 
 
@@ -132,6 +139,43 @@ def parse_status(frame: bytes) -> DeviceInfo | None:
     if sn and all(32 <= b < 127 or b == 0 for b in sn):
         info.serial = sn.decode("ascii", "replace").rstrip("\x00") or None
     return info
+
+
+
+# --------------------------------------------------------------------------- #
+# 电量：固件不直接给百分比，但 0x04 是电池电压（0.05 V/LSB）
+# 实测：未充电 74(3.70V) → 插电充电后 79~80(3.95~4.00V) → 充电时上升、负载时下掉
+# 所以只能给"由电压估算的百分比"，误差约 ±10%，负载重时会偏低。
+# --------------------------------------------------------------------------- #
+VOLTS_PER_LSB = 0.05
+
+# 锂电静置电压 → 剩余电量（标称曲线，非精确库仑计）
+_LI_CURVE = (
+    (3.30, 0), (3.40, 3), (3.50, 8), (3.60, 14), (3.70, 25),
+    (3.75, 35), (3.80, 45), (3.85, 53), (3.90, 60), (3.95, 68),
+    (4.00, 75), (4.05, 83), (4.10, 90), (4.15, 96), (4.20, 100),
+)
+
+
+def battery_voltage(info: "DeviceInfo | None") -> float | None:
+    """0x04 → 伏特（0.05 V/LSB，推测值，实测变化趋势吻合锂电）"""
+    v = info.value(0x04) if info else None
+    return None if v is None else round(v * VOLTS_PER_LSB, 2)
+
+
+def battery_percent(info: "DeviceInfo | None") -> int | None:
+    """电压 → 估算电量百分比（±10%，负载时偏低）"""
+    volts = battery_voltage(info)
+    if volts is None:
+        return None
+    if volts <= _LI_CURVE[0][0]:
+        return 0
+    if volts >= _LI_CURVE[-1][0]:
+        return 100
+    for (v1, p1), (v2, p2) in zip(_LI_CURVE, _LI_CURVE[1:]):
+        if v1 <= volts <= v2:
+            return round(p1 + (p2 - p1) * (volts - v1) / (v2 - v1))
+    return None
 
 
 def paper_out(info: "DeviceInfo | None") -> bool | None:
@@ -166,7 +210,12 @@ def decode_text(frames: list[bytes]) -> list[str]:
             shown = val.decode("ascii", "replace") if val and all(32 <= b < 127 for b in val) else val.hex()
             tail = f"={n}" if n is not None and len(val) <= 8 else shown
             flag = " ✓" if meta and meta.confirmed else ""
-            lines.append(f"  0x{tag:02x} {label:<18} {tail:<12} ({name}){flag}")
+            extra = ""
+            if tag == 0x04 and n is not None:
+                volts = round(n * VOLTS_PER_LSB, 2)
+                pct = battery_percent(info)
+                extra = f"  ≈{volts}V / 约 {pct}% 电量"
+            lines.append(f"  0x{tag:02x} {label:<18} {tail:<12} ({name}){flag}{extra}")
     return lines
 
 

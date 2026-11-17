@@ -146,6 +146,27 @@ check("读不到 → None", device.paper_out(None) is None)
 check("TAGS 里 0x06 标成缺纸", device.TAGS[0x06].name == "paper_out", device.TAGS[0x06].name)
 check("decode_text 显示缺纸", any("缺纸" in line for line in device.decode_text([frame_with_paper(1)])))
 
+print("\n9) 电量估算（0x04 电压 × 0.05V，锂电曲线）")
+
+
+class _FakeInfo:
+    def __init__(self, v):
+        self.v = v
+
+    def value(self, tag):
+        return self.v if tag == 0x04 else None
+
+
+for raw, volts, pct in ((66, 3.30, 0), (74, 3.70, 25), (80, 4.00, 75), (84, 4.20, 100)):
+    fi = _FakeInfo(raw)
+    check(f"0x04={raw} → {volts}V / {pct}%",
+          device.battery_voltage(fi) == volts and device.battery_percent(fi) == pct,
+          f"{device.battery_voltage(fi)}V / {device.battery_percent(fi)}%")
+check("读不到 → None", device.battery_voltage(None) is None and device.battery_percent(None) is None)
+check("as_dict 带 battery", "battery" in info.as_dict())
+check("as_dict 带 paper_out", "paper_out" in info.as_dict())
+check("0x04 标为已确认", device.TAGS[0x04].name == "battery_voltage" and device.TAGS[0x04].confirmed)
+
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

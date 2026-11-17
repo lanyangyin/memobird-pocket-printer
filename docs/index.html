@@ -1309,6 +1309,22 @@ footer {
 
 
 
+
+  /** 单任务能完整打出的最大高度（实机二分：400 行 50mm 可以，480 行不行） */
+  const MAX_ROWS_PER_JOB = 400;
+
+  /** 把裸位图按高度切成多页（每页 ≤ maxRows 行），返回 [{raw,w,h}] */
+  function paginateRaw(raw, w, h, maxRows) {
+    const cap = maxRows || MAX_ROWS_PER_JOB;
+    const rowBytes = (w + 7) >> 3;
+    const pages = [];
+    for (let y = 0; y < h; y += cap) {
+      const rows = Math.min(cap, h - y);
+      pages.push({ raw: raw.subarray(y * rowBytes, (y + rows) * rowBytes), w, h: rows });
+    }
+    return pages.length ? pages : [{ raw, w, h }];
+  }
+
   /**
    * 把 1bpp 裸位图补到目标高度（顶部对齐，其余留白）。
    * 用途：纸总长 = 内容 + 固件固定 18mm，所以要 N mm 的纸，内容只画 N-18。
@@ -1370,7 +1386,8 @@ footer {
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
     ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
-    jobFromRaw, jobFromText, blankJob, padRaw, contentDotsForTotal, utf8ToGray,
+    jobFromRaw, jobFromText, blankJob, padRaw, contentDotsForTotal,
+    paginateRaw, MAX_ROWS_PER_JOB, utf8ToGray,
   };
 });
 
@@ -1747,16 +1764,24 @@ async function print(req, label) {
       log(`浓度 ${restore} → ${dens}（打完恢复）`, 'ok');
     } catch (e) { log('设浓度失败：' + (e.message || e), 'warn'); }
   }
-  $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;
-  await link.sendJob(job, label, {
-    chunk: parseInt($('#chunk').value, 10),
-    preheat: $('#preheat').checked,
-    onProgress: (r) => setProgress($('#bar'), r),
-  });
+  const pages = job.pages || [job];
+  $('#meta').textContent = `${job.meta.format} · ${job.meta.width}×${job.meta.height}`
+    + (pages.length > 1 ? ` · ${pages.length} 页` : '');
 
-  // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
-  // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
-  try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    if (pages.length > 1) log(`发送第 ${i + 1}/${pages.length} 页（${page.meta.height} 行）`, 'ok');
+    await link.sendJob(page, pages.length > 1 ? `${label} ${i + 1}/${pages.length}` : label, {
+      chunk: parseInt($('#chunk').value, 10),
+      preheat: $('#preheat').checked,
+      onProgress: (r) => setProgress($('#bar'), r),
+    });
+
+    // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
+    // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
+    try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
+    if (i < pages.length - 1) await new Promise((r) => setTimeout(r, 400));
+  }
 
   if (dens && restore != null) {
     try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }

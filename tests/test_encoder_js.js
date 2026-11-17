@@ -114,6 +114,20 @@ const trim = enc.padRaw(new Uint8Array(48 * 200), 384, 200, 176);
 check('超过目标时裁切', trim.h, 176);
 check('裁切后长度正确', trim.raw.length, 48 * 176);
 
+
+/* ------------------------------------------------------ 11. 大图分页 */
+console.log('\n11) 单任务上限 400 行 → 自动分页');
+check('上限常量 = 400', enc.MAX_ROWS_PER_JOB, 400);
+for (const [h, n] of [[320, 1], [400, 1], [480, 2], [1000, 3]]) {
+  const pages = enc.paginateRaw(new Uint8Array(48 * h), 384, h);
+  check(`${h} 行 → ${n} 页`, pages.length, n);
+}
+const p1000 = enc.paginateRaw(new Uint8Array(48 * 1000), 384, 1000);
+check('分页后总行数守恒', p1000.reduce((a, p) => a + p.h, 0), 1000);
+check('每页宽度不变', p1000.every((p) => p.w === 384), true);
+check('首页行数 = 400', p1000[0].h, 400);
+check('首页字节 = 48×400', p1000[0].raw.length, 48 * 400);
+
 /* ------------------------------------------------------------------ 汇总 */
 console.log(`\n通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);
 process.exit(failed ? 1 : 0);

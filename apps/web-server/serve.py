@@ -224,6 +224,19 @@ def _size_tier(font_size) -> int:
     return 2
 
 
+def _slice_raw(raw: bytes, w: int, h: int, max_rows: int):
+    """把裸位图按高度切片 → [(raw, w, h), ...]，每片 ≤ max_rows 行。
+
+    GT1 单任务超过约 400 行就只打出开头一点点（实测二分），所以长图必须分页。
+    """
+    row_bytes = (w + 7) // 8
+    out = []
+    for y in range(0, h, max_rows):
+        rows = min(max_rows, h - y)
+        out.append((raw[y * row_bytes:(y + rows) * row_bytes], w, rows))
+    return out or [(raw, w, h)]
+
+
 def encode(req: dict) -> dict:
     kind = req.get("kind") or "text"
     fmt = (req.get("format") or "").lower()
@@ -288,11 +301,26 @@ def encode(req: dict) -> dict:
     if feed_lines > 0:
         frames += [base64.b64encode(f).decode() for f in packet.feed_job(feed_lines).frames]
 
+    # 超过单任务上限就切页（实测 400 行可以完整打，480 行只出一行）
+    from memobird_printer.paper import MAX_ROWS_PER_JOB
+
+    pages = []
+    for slice_raw, sw, sh in _slice_raw(raw, w, h, MAX_ROWS_PER_JOB):
+        sbmp = raw_to_bmp(sw, sh, slice_raw, official=True)
+        sjob = packet.build_bmp_job(sbmp)
+        sframes = [base64.b64encode(f).decode() for f in sjob.frames]
+        if feed_lines > 0:
+            sframes += [base64.b64encode(f).decode() for f in packet.feed_job(feed_lines).frames]
+        pages.append({"frames": sframes,
+                      "meta": {"format": "bmp", "chunks": sjob.chunks, "bytes": len(sbmp),
+                               "preheat": packet.PREHEAT, "width": sw, "height": sh}})
+
     return {
-        "frames": frames,
+        "frames": pages[0]["frames"],
+        "pages": pages,
         "meta": {"format": used, "chunks": job.chunks, "bytes": payload_bytes,
                  "preheat": packet.PREHEAT, "width": w, "height": h,
-                 "sizeTier": tier, "darken": darken},
+                 "sizeTier": tier, "darken": darken, "pageCount": len(pages)},
     }
 
 

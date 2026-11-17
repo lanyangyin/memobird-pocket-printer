@@ -391,6 +391,22 @@
 
 
 
+
+  /** 单任务能完整打出的最大高度（实机二分：400 行 50mm 可以，480 行不行） */
+  const MAX_ROWS_PER_JOB = 400;
+
+  /** 把裸位图按高度切成多页（每页 ≤ maxRows 行），返回 [{raw,w,h}] */
+  function paginateRaw(raw, w, h, maxRows) {
+    const cap = maxRows || MAX_ROWS_PER_JOB;
+    const rowBytes = (w + 7) >> 3;
+    const pages = [];
+    for (let y = 0; y < h; y += cap) {
+      const rows = Math.min(cap, h - y);
+      pages.push({ raw: raw.subarray(y * rowBytes, (y + rows) * rowBytes), w, h: rows });
+    }
+    return pages.length ? pages : [{ raw, w, h }];
+  }
+
   /**
    * 把 1bpp 裸位图补到目标高度（顶部对齐，其余留白）。
    * 用途：纸总长 = 内容 + 固件固定 18mm，所以要 N mm 的纸，内容只画 N-18。
@@ -452,6 +468,7 @@
     buildTextJob, buildBitmapJob, buildBmpJob, chunkedJob, feedJob,
     // 图像
     ditherToRaw, rawToBmp, packThreshold, flipRows, dilateBlack, DARKEN_PRESETS,
-    jobFromRaw, jobFromText, blankJob, padRaw, contentDotsForTotal, utf8ToGray,
+    jobFromRaw, jobFromText, blankJob, padRaw, contentDotsForTotal,
+    paginateRaw, MAX_ROWS_PER_JOB, utf8ToGray,
   };
 });

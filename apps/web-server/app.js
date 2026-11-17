@@ -87,19 +87,27 @@ async function printApi(path, req, label) {
 
   try {
     const j = await api(path, req);
+    const pages = j.pages || [j];
     $('#meta').textContent = j.meta
-      ? `${j.meta.format} · ${j.meta.bytes}B · ${j.meta.chunks}帧 · ${j.meta.width}×${j.meta.height}`
+      ? `${j.meta.format} · ${j.meta.width}×${j.meta.height}`
+        + (pages.length > 1 ? ` · ${pages.length} 页` : '')
       : '';
     const chunk = parseInt($('#chunk').value, 10);
-    await link.sendJob(jobFromApi(j), label, {
-      chunk,
-      preheat: $('#preheat').checked,
-      onProgress: (r) => setProgress($('#bar'), r),
-    });
 
-    // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
-    // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
-    try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
+    for (let i = 0; i < pages.length; i++) {
+      if (pages.length > 1) log(`发送第 ${i + 1}/${pages.length} 页（${pages[i].meta.height} 行）`, 'ok');
+      await link.sendJob(jobFromApi(pages[i]),
+        pages.length > 1 ? `${label} ${i + 1}/${pages.length}` : label, {
+          chunk,
+          preheat: $('#preheat').checked,
+          onProgress: (r) => setProgress($('#bar'), r),
+        });
+
+      // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
+      // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
+      try { await link.query(window.MBBle.STATUS_FRAME, 400); } catch (e) { /* 忽略 */ }
+      if (i < pages.length - 1) await new Promise((r) => setTimeout(r, 400));
+    }
   } finally {
     if (dens && restore != null) {
       try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }

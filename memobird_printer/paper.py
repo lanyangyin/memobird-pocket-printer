@@ -23,6 +23,12 @@ DOTS_PER_MM_203 = 8.0        # 203 dpi / 25.4mm ≒ 8 dots/mm
 #   任务开始 11mm + 任务结束 7mm = 18mm
 # 所以「出纸总长 = 内容高度 + OVERHEAD_MM」——想要总长 N，内容就画 N-18。
 OVERHEAD_MM = 18.0
+
+# 单个打印任务能完整打出的最大高度（实机二分，GT1）：
+#   400 行（50mm / 19.2KB）✅ 完整
+#   480 行（60mm / 23.1KB）❌ 只打出第一行
+# 超过就必须分页，每页单独发（页间会有固件的 18mm 空隙）。
+MAX_ROWS_PER_JOB = 400
 DOTS_PER_MM_300 = 11.811     # G4 之类 300dpi 机型（按机型调）
 
 
@@ -132,3 +138,19 @@ def split_image(img, segment_mm: float = 15, *, dpi: int = 203):
     for y in range(0, h, seg):
         out.append(img.crop((0, y, w, min(y + seg, h))))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# 大图自动分页
+# --------------------------------------------------------------------------- #
+def paginate(img, max_rows: int = MAX_ROWS_PER_JOB):
+    """
+    把超过单任务上限的图切成多页（每页 ≤ max_rows 行）。
+
+    为什么需要：GT1 单任务超过约 400 行就只会打出开头一点点（实测 480 行失败）。
+    代价：页与页之间会有固件固定的 18mm 空隙，抹不掉。
+    """
+    w, h = img.size
+    if h <= max_rows:
+        return [img]
+    return [img.crop((0, y, w, min(y + max_rows, h))) for y in range(0, h, max_rows)]

@@ -101,6 +101,18 @@ check("总长小于 18mm 时，内容取最小 1mm = 8 点", paper.content_dots_
 f40, m40 = paper.blank_frames(mm=40, total=True)
 check("blank_frames(total) 内容 = 22mm", m40["dots"] == 176, str(m40["dots"]))
 
+print("\n8) 单任务高度上限与分页")
+from PIL import Image                                # noqa: E402
+
+check("单任务上限 = 400 行", paper.MAX_ROWS_PER_JOB == 400, str(paper.MAX_ROWS_PER_JOB))
+check("400 行不分页", len(paper.paginate(Image.new("L", (384, 400)))) == 1)
+check("480 行分 2 页", len(paper.paginate(Image.new("L", (384, 480)))) == 2)
+check("1000 行分 3 页", len(paper.paginate(Image.new("L", (384, 1000)))) == 3)
+pages = paper.paginate(Image.new("L", (384, 1000)))
+check("分页后总行数不变", sum(p.size[1] for p in pages) == 1000,
+      str(sum(p.size[1] for p in pages)))
+check("每页宽度不变", all(p.size[0] == 384 for p in pages))
+
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

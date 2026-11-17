@@ -245,9 +245,23 @@ def cmd_print(args) -> int:
                 elif text_arg and not _image_path(args):
                     # 中文必须走位图：这台固件的 GBK 文本帧没有中文字形（实测打出来是黑块）
                     print("文本含中文 → 改走位图（GBK 文本帧无中文字形）", file=sys.stderr)
-                    job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True))
+                    job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True),
+                                               chunk=getattr(args, "bmp_chunk", 1024))
                 else:
-                    job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True))
+                    from .paper import MAX_ROWS_PER_JOB, paginate
+
+                    pages = paginate(args._gray)
+                    if len(pages) > 1:
+                        print(f"图高 {args._gray.size[1]} 行 > 单任务上限 {MAX_ROWS_PER_JOB} 行 → 分 {len(pages)} 页",
+                              file=sys.stderr)
+                    for n, page in enumerate(pages, 1):
+                        pw, ph, praw = dither_to_raw(page, args.mode)
+                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
+                                                    chunk=getattr(args, "bmp_chunk", 1024))
+                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.03)
+                        if len(pages) > 1:
+                            print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph/8:.1f}mm)", file=sys.stderr)
+                            await asyncio.sleep(0.5)
                 seg_mm = getattr(args, "segment_mm", 0) or 0
                 if seg_mm > 0 and not (getattr(args, "text", None) and not _image_path(args)):
                     from .paper import split_image
@@ -472,7 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--align", default="top", choices=["top", "center", "bottom"],
                        help="补白时内容放哪（默认 top）")
         p.add_argument("--no-preheat", action="store_true", help="不发热身包（排查用）")
-        p.add_argument("--chunk", type=int, default=20, help="GATT 每次写入字节数（默认 20）")
+        p.add_argument("--chunk", type=int, default=180, help="GATT 每次写入字节数")
+        p.add_argument("--bmp-chunk", type=int, default=1024,
+                       help="位图每帧载荷字节数（默认 1024；加大减少帧数，绕过固件单任务帧数上限）")
         p.add_argument("--settle", type=float, default=0.002, help="每片之后停顿（秒）")
         p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
         p.add_argument("--density", type=int, default=0,

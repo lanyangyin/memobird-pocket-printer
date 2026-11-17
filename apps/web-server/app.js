@@ -155,7 +155,7 @@ $('#btn-feed').addEventListener('click', async () => {
   const mm = parseFloat($('#feed-mm').value) || 0;
   if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
   try {
-    const j = await api('/api/feed', { mm, tick: true });
+    const j = await api('/api/feed', { mm, tick: true, total: true });
     $('#meta').textContent = `走纸 ${j.meta.mm}mm · ${j.meta.dots} 点 · ${j.frames.length} 帧`;
     await link.sendJob({ frames: j.frames.map(b64ToBytes), meta: j.meta }, `走纸 ${mm}mm`, {
       chunk: parseInt($('#chunk').value, 10),

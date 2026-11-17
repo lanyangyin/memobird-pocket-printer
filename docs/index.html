@@ -1336,7 +1336,11 @@ footer {
     opts = opts || {};
     const dpi = opts.dpi || 203;
     const dotsPerMm = dpi <= 203 ? 8 : 11.811;
-    const h = Math.max(1, Math.round((mm != null ? mm : (opts.dots || 0)) * dotsPerMm));
+    // total: mm 表示"纸总长"，自动扣掉固件固定多喂的 18mm
+    const h = opts.dots != null
+      ? Math.max(1, Math.round(opts.dots))
+      : (opts.total ? contentDotsForTotal(mm, dpi)
+                    : Math.max(1, Math.round(mm * dotsPerMm)));
     const w = WIDTH;
     const raw = new Uint8Array(((w + 7) >> 3) * h);      // 全零 = 全白
     if (opts.tick) raw[0] = 0x80;
@@ -1799,7 +1803,7 @@ $('#btn-feed').addEventListener('click', async () => {
   const mm = parseFloat($('#feed-mm').value) || 0;
   if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
   try {
-    const job = E.blankJob(mm, { tick: true });
+    const job = E.blankJob(mm, { tick: true, total: true });
     $('#meta').textContent = `走纸 ${job.meta.mm}mm · ${job.meta.dots} 点 · ${job.frames.length} 帧`;
     await link.sendJob(job, `走纸 ${mm}mm`, {
       chunk: parseInt($('#chunk').value, 10),

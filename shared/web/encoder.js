@@ -419,7 +419,11 @@
     opts = opts || {};
     const dpi = opts.dpi || 203;
     const dotsPerMm = dpi <= 203 ? 8 : 11.811;
-    const h = Math.max(1, Math.round((mm != null ? mm : (opts.dots || 0)) * dotsPerMm));
+    // total: mm 表示"纸总长"，自动扣掉固件固定多喂的 18mm
+    const h = opts.dots != null
+      ? Math.max(1, Math.round(opts.dots))
+      : (opts.total ? contentDotsForTotal(mm, dpi)
+                    : Math.max(1, Math.round(mm * dotsPerMm)));
     const w = WIDTH;
     const raw = new Uint8Array(((w + 7) >> 3) * h);      // 全零 = 全白
     if (opts.tick) raw[0] = 0x80;

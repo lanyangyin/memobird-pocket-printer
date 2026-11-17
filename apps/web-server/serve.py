@@ -161,7 +161,8 @@ def encode_feed(req: dict) -> dict:
 
     if req.get("mm") is not None:
         frames, meta = blank_frames(mm=float(req["mm"]), dpi=int(req.get("dpi") or 203),
-                                    tick=bool(req.get("tick", True)))
+                                    tick=bool(req.get("tick", True)),
+                                    total=bool(req.get("total", True)))
     else:
         frames, meta = line_frames(int(req.get("lines") or 3))
     return {"frames": [base64.b64encode(f).decode() for f in frames], "meta": meta}

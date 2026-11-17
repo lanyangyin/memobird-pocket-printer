@@ -270,7 +270,8 @@ def cmd_print(args) -> int:
                 elif not is_text:
                     from .paper import MAX_ROWS_PER_JOB, paginate
 
-                    pages = paginate(args._gray)
+                    pages = ([args._gray] if getattr(args, "no_paginate", False)
+                             else paginate(args._gray))
                     if len(pages) > 1:
                         print(f"图高 {args._gray.size[1]} 行 > 单任务上限 {MAX_ROWS_PER_JOB} 行 "
                               f"→ 分 {len(pages)} 页（页间有固件 18mm 空隙）", file=sys.stderr)
@@ -280,9 +281,9 @@ def cmd_print(args) -> int:
                         from .paper import EXACT_SAFE_FRAMES
 
                         if total_frames > EXACT_SAFE_FRAMES:
-                            print(f"⚠ --exact 不发终结帧：本次约 {total_frames} 帧 > 安全上限 "
-                                  f"{EXACT_SAFE_FRAMES} 帧（实测 15 帧只出白纸）；"
-                                  f"要保险就用默认的 --terminator status", file=sys.stderr)
+                            print(f"⚠ --exact 不发终结帧：本次约 {total_frames} 帧，"
+                                  f"超过 {EXACT_SAFE_FRAMES} 帧（实测 24 帧/62mm 没问题，"
+                                  f"更大先小图试一次）", file=sys.stderr)
 
                     for n, page in enumerate(pages, 1):
                         pw, ph, praw = dither_to_raw(page, args.mode)
@@ -517,6 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
+        p.add_argument("--no-paginate", action="store_true",
+                       help="不按 400 行分页，整张一次发（排查固件上限用）")
         p.add_argument("--exact", action="store_true",
                        help="内容结束立刻停：不补白、不打后走纸、不发终结帧（可能打不出大图）")
         p.add_argument("--terminator", default="commit",

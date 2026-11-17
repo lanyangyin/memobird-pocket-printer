@@ -104,17 +104,20 @@ check("blank_frames(total) 内容 = 22mm", m40["dots"] == 176, str(m40["dots"]))
 print("\n8) 单任务高度上限与分页")
 from PIL import Image                                # noqa: E402
 
-check("单任务上限 = 400 行", paper.MAX_ROWS_PER_JOB == 400, str(paper.MAX_ROWS_PER_JOB))
+check("分页阈值 = 1200 行（流控后单任务可到 100mm+）", paper.MAX_ROWS_PER_JOB == 1200,
+      str(paper.MAX_ROWS_PER_JOB))
 check("400 行不分页", len(paper.paginate(Image.new("L", (384, 400)))) == 1)
-check("480 行分 2 页", len(paper.paginate(Image.new("L", (384, 480)))) == 2)
-check("1000 行分 3 页", len(paper.paginate(Image.new("L", (384, 1000)))) == 3)
-pages = paper.paginate(Image.new("L", (384, 1000)))
-check("分页后总行数不变", sum(p.size[1] for p in pages) == 1000,
+check("800 行也不分页", len(paper.paginate(Image.new("L", (384, 800)))) == 1)
+check("1300 行分 2 页", len(paper.paginate(Image.new("L", (384, 1300)))) == 2)
+check("2500 行分 3 页", len(paper.paginate(Image.new("L", (384, 2500)))) == 3)
+pages = paper.paginate(Image.new("L", (384, 2500)))
+check("分页后总行数不变", sum(p.size[1] for p in pages) == 2500,
       str(sum(p.size[1] for p in pages)))
 check("每页宽度不变", all(p.size[0] == 384 for p in pages))
 
 print("\n9) 不发终结帧（--exact）的安全上限")
-check("安全上限 = 13 帧", paper.EXACT_SAFE_FRAMES == 13, str(paper.EXACT_SAFE_FRAMES))
+check("提示阈值 = 200 帧（不再是硬限制）", paper.EXACT_SAFE_FRAMES == 200,
+      str(paper.EXACT_SAFE_FRAMES))
 # 13 帧 ≈ 34mm；15 帧实测出白纸
 from memobird_printer.image import raw_to_bmp           # noqa: E402
 

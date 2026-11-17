@@ -172,7 +172,8 @@ class BleWorker:
         from memobird_printer.ble import BlePrinter
 
         async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
-            await dev.send_frames(frames, preheat=preheat, inter_frame=0.02)
+            await dev.send_frames(frames, preheat=preheat, inter_frame=0.02,
+                                  wait_ack=True, flow_control=True)
 
     def send(self, frames: list[bytes], preheat: bool, timeout: float = 180):
         return self.call(self._send(frames, preheat), timeout)

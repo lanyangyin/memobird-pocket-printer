@@ -90,6 +90,17 @@ check("裁切后宽度不变", trimmed.size[0] == 384)
 bottom = paper.pad_to_length(img, 60, align="bottom")
 check("bottom 对齐仍是 480 点", bottom.size[1] == 480)
 
+print("\n7) 固件固定多喂 18mm 的补偿（实机：上 11 + 下 7）")
+check("常量 = 18mm", paper.OVERHEAD_MM == 18.0, str(paper.OVERHEAD_MM))
+check("总长 40mm → 内容 176 点", paper.content_dots_for_total(40) == 176,
+      str(paper.content_dots_for_total(40)))
+check("总长 58mm → 内容 320 点（= 实机 40mm 图那张）",
+      paper.content_dots_for_total(58) == 320, str(paper.content_dots_for_total(58)))
+check("总长小于 18mm 时，内容取最小 1mm = 8 点", paper.content_dots_for_total(10) == 8,
+      str(paper.content_dots_for_total(10)))
+f40, m40 = paper.blank_frames(mm=40, total=True)
+check("blank_frames(total) 内容 = 22mm", m40["dots"] == 176, str(m40["dots"]))
+
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

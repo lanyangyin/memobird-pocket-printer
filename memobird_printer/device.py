@@ -66,8 +66,9 @@ TAGS: dict[int, Tag] = {
     0xFF: Tag("magic", "固定 0x01", "flag", False, "每次都是 01"),
     0x01: Tag("constant_23", "恒定 23（不是温度也不是电量）", "unknown", False,
               "实测：充电/打满黑页/捂热电池/写入 30 全都不变 → 更像固件常量或永不更新的假电量"),
-    0x02: Tag("auto_off_minutes", "自动关机时间（分钟）", "setting", False,
-              "写入即生效，状态同步；默认 10"),
+    0x02: Tag("density", "打印浓度（1..10）", "setting", True,
+              "写 3 后打印明显变浅 ✅；浓度越低每行加热越久 ⇒ 打印越慢，"
+              "慢速 BLE（~3KB/s）下反而能完整打完长图"),
     0x03: Tag("led", "指示灯", "setting", True,
               "写 1 亮 / 0 灭，状态同步 —— 因果已用肉眼验证"),
     0x04: Tag("voltage_step", "电压类读数（0.05V/LSB?）", "sensor", False,
@@ -83,7 +84,7 @@ TAGS: dict[int, Tag] = {
 
 #: 可写的设置项（cmd 0x03）：tag → (说明, 取值范围)
 SETTINGS: dict[int, tuple[str, tuple[int, int]]] = {
-    0x02: ("自动关机时间（分钟，待行为验证）", (1, 60)),
+    0x02: ("自动关机时间（分钟，待行为验证）", (1, 10)),
     0x03: ("指示灯开关", (0, 1)),
 }
 

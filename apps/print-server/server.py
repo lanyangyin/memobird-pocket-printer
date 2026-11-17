@@ -112,6 +112,13 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
             raise ValueError("image 为空")
         img = prepare(_load_image(data), mode=mode)
 
+    total_mm = req.get("totalMm")
+    if total_mm:
+        from memobird_printer.paper import pad_to_length
+
+        img = pad_to_length(img, float(total_mm), dpi=int(req.get("dpi") or 203),
+                            align=req.get("align") or "top", total=True)
+
     target_mm = req.get("lengthMm")
     if target_mm:
         from memobird_printer.paper import pad_to_length

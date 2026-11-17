@@ -48,14 +48,15 @@ class BlePrinter:
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
                  settle: float = 0.02, timeout: float = 15.0, echo: bool = True,
-                 chunk: int = 20):
+                 chunk: int = 180, batch: int = 1):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
         self.settle = settle
         self.timeout = timeout
         self.echo = echo
-        self.chunk = max(20, int(chunk))     # 每次 GATT 写入的字节数（实测 20 最稳，见浏览器实现）
+        self.chunk = max(20, int(chunk))     # 每次 GATT 写入的字节数
+        self.batch = max(1, int(batch))      # 并发写入数：>1 时不等上一片写完，显著提速
         self._client = None
         self._rx = bytearray()          # 通知分片的接收缓冲
         self._notifies: list[bytes] = []   # 已重组成完整帧
@@ -112,17 +113,26 @@ class BlePrinter:
     async def write(self, data: bytes) -> None:
         """按 MTU 切片写入（write-without-response 更快，失败回退 write-with-response）。"""
         assert self._client is not None
-        # 实测：按 MTU-3（Windows 协商到 490 → 487B）写入时，图片帧会被截断：
-        # 固件仍逐包 ack，但内容残缺 → 图不打印。浏览器实现一直用 20B，是稳的。
         step = self.chunk
-        for i in range(0, len(data), step):
-            chunk = data[i:i + step]
+        pieces = [data[i:i + step] for i in range(0, len(data), step)]
+
+        async def send_one(piece: bytes):
             try:
-                await self._client.write_gatt_char(self.write_uuid, chunk, response=False)
+                await self._client.write_gatt_char(self.write_uuid, piece, response=False)
             except Exception:
-                await self._client.write_gatt_char(self.write_uuid, chunk, response=True)
-            if self.settle:
-                await asyncio.sleep(self.settle)
+                await self._client.write_gatt_char(self.write_uuid, piece, response=True)
+
+        if self.batch <= 1:
+            for piece in pieces:
+                await send_one(piece)
+                if self.settle:
+                    await asyncio.sleep(self.settle)
+        else:
+            # 流水线：一批 batch 个写入并发提交，避免每次 50ms 的往返开销累积
+            for i in range(0, len(pieces), self.batch):
+                await asyncio.gather(*(send_one(p) for p in pieces[i:i + self.batch]))
+                if self.settle:
+                    await asyncio.sleep(self.settle)
 
     async def send_frames(self, frames: Iterable[bytes], *, preheat: bool = False,
                           inter_frame: float = 0.05) -> None:
@@ -180,17 +190,25 @@ class BlePrinter:
         job = packet.build_text_job(text, encoding=encoding)
         await self.send_frames(job.frames, preheat=True)
 
-    async def print_raw_image(self, raw: bytes, *, preheat: bool = True, feed: bool = True) -> None:
+    async def print_raw_image(self, raw: bytes, *, preheat: bool = True,
+                              terminator: str = "feed", feed_lines: int = 3) -> None:
         """打印 1bpp 裸位图。
 
-        feed=True 时在图片帧后补一帧纯换行 —— 网页实现一直这么做，
-        而图片帧本身没有"结束标记"，实测不补这帧固件不会真正出纸。
+        图片帧本身没有"结束标记"，实测不补一帧固件不会真正出纸。
+        终结帧三选一：
+
+        * "feed"   —— 发 N 个换行（会送出 N 行空白，N=3 约 12mm）
+        * "status" —— 发一条状态查询（不驱动电机 ⇒ 零走纸）
+        * "none"   —— 不发（实测多数固件不出纸）
         """
         job = packet.build_bitmap_job(raw)
         await self.send_frames(job.frames, preheat=preheat)
-        if feed:
+        if terminator == "feed":
             await asyncio.sleep(0.3)
-            await self.send_frames(packet.feed_job(3).frames, preheat=False)
+            await self.send_frames(packet.feed_job(feed_lines).frames, preheat=False)
+        elif terminator == "status":
+            await asyncio.sleep(0.15)
+            await self.transact(packet.build_frame(packet.CMD_STATUS), wait=0.4, retries=1)
 
 
 async def scan(timeout: float = 8.0, *, all_devices: bool = False) -> list[dict]:

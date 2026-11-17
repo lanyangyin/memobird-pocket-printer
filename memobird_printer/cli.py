@@ -58,14 +58,21 @@ def _make_image(args):
     img = prepare(src, mode=args.mode, font_size=args.font_size, font=args.font, invert=args.invert)
 
     # 整张纸正好 N 毫米：给内容补白（或裁切）到目标高度
+    total_mm = getattr(args, "total_mm", None)
     target_mm = getattr(args, "length_mm", None)
-    if target_mm:
-        from .paper import pad_to_length
+    if total_mm or target_mm:
+        from .paper import OVERHEAD_MM, pad_to_length
 
         before = img.size[1]
-        img = pad_to_length(img, float(target_mm), align=getattr(args, "align", "top"))
-        print(f"整页高度：{before} 点 → {img.size[1]} 点（{target_mm}mm @203dpi）")
+        if total_mm:
+            img = pad_to_length(img, float(total_mm), align=getattr(args, "align", "top"), total=True)
+            print(f"纸总长 {total_mm}mm：内容 {before} 点 → {img.size[1]} 点"
+                  f"（{img.size[1] / 8:.1f}mm + 固件 {OVERHEAD_MM:.0f}mm）")
+        else:
+            img = pad_to_length(img, float(target_mm), align=getattr(args, "align", "top"))
+            print(f"内容高度：{before} 点 → {img.size[1]} 点（{target_mm}mm @203dpi）")
 
+    args._gray = img
     return dither_to_raw(img, args.mode)
 
 
@@ -215,18 +222,59 @@ def cmd_print(args) -> int:
         async def run():
             from .ble import BlePrinter
 
-            async with BlePrinter(args.ble, chunk=getattr(args, "chunk", 20),
-                                  settle=getattr(args, "settle", 0.02)) as b:
+            async with BlePrinter(args.ble, chunk=getattr(args, "chunk", 180),
+                                  settle=getattr(args, "settle", 0.002),
+                                  batch=getattr(args, "batch", 1)) as b:
                 preheat = not getattr(args, "no_preheat", False)
+
+                # 降浓度 = 每行加热更久 = 打印变慢 → 慢速 BLE 下长图才打得完整
+                dens = getattr(args, "density", 0) or 0
+                restore = None
+                if dens:
+                    from . import device as _dev
+                    infos = await _dev.read_info(b, detail=False, wait=1.2)
+                    restore = infos[-1].value(0x02) if infos else 10
+                    await b.transact(packet.build_frame(packet.CMD_CONTROL,
+                                                        packet.tlv(0x02, bytes([dens]))),
+                                     wait=0.4, retries=1)
+                    print(f"浓度：{restore} → {dens}（打完恢复）")
                 if getattr(args, "text", None) and not _image_path(args):
                     job = packet.job_for_text(getattr(args, "text", None) or "")
                 else:
                     job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True))
-                await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
-                # 图片帧没有结束标记，补一帧换行当终结（网页实现一直这么做）
+                seg_mm = getattr(args, "segment_mm", 0) or 0
+                if seg_mm > 0 and not (getattr(args, "text", None) and not _image_path(args)):
+                    from .paper import split_image
+
+                    pieces = split_image(args._gray, seg_mm)
+                    print(f"分段打印：{len(pieces)} 段 × ≤{seg_mm}mm")
+                    for n, piece in enumerate(pieces, 1):
+                        pw, ph, praw = dither_to_raw(piece, "threshold")
+                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True))
+                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.02)
+                        await asyncio.sleep(0.25)
+                        await b.send_frames(packet.feed_job(1).frames, preheat=False)
+                        print(f"  段 {n}/{len(pieces)}  {ph} 点 ({ph/8:.1f}mm)")
+                        await asyncio.sleep(0.35)
+                else:
+                    await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
+                # 图片帧没有结束标记：用状态查询当终结帧 → 零走纸
                 if not (getattr(args, "text", None) and not _image_path(args)):
-                    await asyncio.sleep(0.3)
-                    await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
+                    term = getattr(args, "terminator", "feed")
+                    if term == "feed":
+                        await asyncio.sleep(0.3)
+                        await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
+                    elif term == "status":
+                        await asyncio.sleep(0.15)
+                        await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.5, retries=1)
+
+                # 恢复原浓度
+                if dens and restore is not None:
+                    await asyncio.sleep(0.2)
+                    await b.transact(packet.build_frame(packet.CMD_CONTROL,
+                                                        packet.tlv(0x02, bytes([int(restore)]))),
+                                     wait=0.4, retries=1)
+                    print(f"浓度已恢复为 {restore}")
         asyncio.run(run())
         print("已发送")
         return 0
@@ -259,7 +307,8 @@ def cmd_feed(args) -> int:
         mm = None
 
     if mm is not None:
-        frames, meta = blank_frames(mm=mm, dpi=args.dpi, tick=args.tick)
+        frames, meta = blank_frames(mm=mm, dpi=args.dpi, tick=args.tick,
+                                    total=getattr(args, "total", False))
     else:
         frames, meta = line_frames(args.lines)
 
@@ -408,12 +457,21 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--scale", type=int, default=2)
         p.add_argument("--invert", action="store_true")
         p.add_argument("--length-mm", type=float,
-                       help="整张纸正好 N 毫米（内容补白/裁切到该高度）")
+                       help="内容高度补白/裁切到 N 毫米（不含固件固定的 18mm）")
+        p.add_argument("--total-mm", type=float,
+                       help="纸总长正好 N 毫米（自动扣掉固件固定多喂的 18mm）")
         p.add_argument("--align", default="top", choices=["top", "center", "bottom"],
                        help="补白时内容放哪（默认 top）")
         p.add_argument("--no-preheat", action="store_true", help="不发热身包（排查用）")
         p.add_argument("--chunk", type=int, default=20, help="GATT 每次写入字节数（默认 20）")
-        p.add_argument("--settle", type=float, default=0.02, help="每片之后停顿（秒）")
+        p.add_argument("--settle", type=float, default=0.002, help="每片之后停顿（秒）")
+        p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
+        p.add_argument("--density", type=int, default=0,
+                       help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
+        p.add_argument("--terminator", default="feed", choices=["feed", "status", "none"],
+                       help="图片的终结帧：feed=走纸(默认) / status=状态查询(零走纸) / none")
+        p.add_argument("--segment-mm", type=float, default=0,
+                       help="长图分段打印，每段毫米数（>0 启用；绕过 BLE 吞吐不足）")
         return p
 
     # preview / text：位置参数是文本
@@ -450,6 +508,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--lines", type=int, default=3, help="按行走纸（粗）")
     s.add_argument("--dpi", type=int, default=203, choices=[203, 300])
     s.add_argument("--tick", action="store_true", help="画 1 个黑点，防止固件跳过全白图")
+    s.add_argument("--total", action="store_true",
+                   help="--mm 表示纸总长（自动扣掉固件固定多喂的 18mm）")
     s.add_argument("--ble")
     s.add_argument("--spp")
     s.add_argument("--lan")

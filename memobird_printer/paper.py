@@ -18,6 +18,11 @@ from __future__ import annotations
 from . import packet
 
 DOTS_PER_MM_203 = 8.0        # 203 dpi / 25.4mm ≒ 8 dots/mm
+
+# 固件每个打印任务固定多喂的纸（实机实测，GT1）：
+#   任务开始 11mm + 任务结束 7mm = 18mm
+# 所以「出纸总长 = 内容高度 + OVERHEAD_MM」——想要总长 N，内容就画 N-18。
+OVERHEAD_MM = 18.0
 DOTS_PER_MM_300 = 11.811     # G4 之类 300dpi 机型（按机型调）
 
 
@@ -35,12 +40,27 @@ def blank_raw(width: int, height: int, *, tick: bool = False) -> bytes:
     return bytes(raw)
 
 
+def content_dots_for_total(total_mm: float, dpi: int = 203,
+                           overhead_mm: float = OVERHEAD_MM) -> int:
+    """想要纸总长 total_mm，内容该画多少点（扣掉固件固定多喂的 18mm）。"""
+    return max(1, mm_to_dots(max(1.0, total_mm - overhead_mm), dpi))
+
+
 def blank_frames(mm: float | None = None, *, dots: int | None = None, width: int = 384,
-                 dpi: int = 203, tick: bool = False) -> tuple[list[bytes], dict]:
-    """走纸任务：全白位图 → BMP → 分帧。返回 (frames, meta)。"""
+                 dpi: int = 203, tick: bool = False,
+                 total: bool = False) -> tuple[list[bytes], dict]:
+    """走纸任务：全白位图 → BMP → 分帧。返回 (frames, meta)。
+
+    total=True 时 mm 表示「纸总长」，会自动扣掉固件固定多喂的 18mm。
+    """
     from .image import raw_to_bmp
 
-    h = dots if dots is not None else mm_to_dots(mm or 0, dpi)
+    if dots is not None:
+        h = dots
+    elif total:
+        h = content_dots_for_total(mm or 0, dpi)
+    else:
+        h = mm_to_dots(mm or 0, dpi)
     h = max(1, min(int(h), 30000))            # 别让人一次走 30 米
     raw = blank_raw(width, h, tick=tick)
     bmp = raw_to_bmp(width, h, raw, official=True)
@@ -62,7 +82,8 @@ def line_frames(lines: int = 3) -> tuple[list[bytes], dict]:
 # --------------------------------------------------------------------------- #
 # 让整张纸正好 N 毫米：给内容补白 / 裁切到目标高度
 # --------------------------------------------------------------------------- #
-def pad_to_length(img, mm: float, *, dpi: int = 203, align: str = "top"):
+def pad_to_length(img, mm: float, *, dpi: int = 203, align: str = "top",
+                  total: bool = False, overhead_mm: float = OVERHEAD_MM):
     """
     把灰度图补白（或裁切）到正好 `mm` 毫米高。
 
@@ -73,7 +94,10 @@ def pad_to_length(img, mm: float, *, dpi: int = 203, align: str = "top"):
     """
     from PIL import Image
 
-    target = mm_to_dots(mm, dpi)
+    if total:
+        target = content_dots_for_total(mm, dpi, overhead_mm)
+    else:
+        target = mm_to_dots(mm, dpi)
     w, h = img.size
     if h == target:
         return img
@@ -89,3 +113,22 @@ def pad_to_length(img, mm: float, *, dpi: int = 203, align: str = "top"):
         y = 0
     canvas.paste(img, (0, y))
     return canvas
+
+
+# --------------------------------------------------------------------------- #
+# 长图分段（绕过 BLE 吞吐不足）
+# --------------------------------------------------------------------------- #
+def split_image(img, segment_mm: float = 15, *, dpi: int = 203):
+    """
+    把长图切成若干段，每段高度 ≈ segment_mm。
+
+    为什么需要：Windows 的 BLE 写入吞吐约 3 KB/s，而打印机是一边收一边打。
+    实测超过约 25 mm 的内容会"中途断粮"直接停住 —— 所以长图必须分段，
+    每段单独打印、各自带终结帧，打印机就会连续吐纸。
+    """
+    seg = max(1, mm_to_dots(segment_mm, dpi))
+    w, h = img.size
+    out = []
+    for y in range(0, h, seg):
+        out.append(img.crop((0, y, w, min(y + seg, h))))
+    return out

@@ -111,7 +111,8 @@ POST /print  {"text": "hi", "checkPaper": true}
   "bold": false, "underline": false,
   "mode": "threshold",             // floyd | atkinson | bayer | threshold
   "feed": true,                    // 打后走纸（默认 true）
-  "lengthMm": 60,                  // 整张纸正好 60mm（补白/裁切内容高度）
+  "lengthMm": 60,                  // 内容高度补到 60mm
+  "totalMm": 40,                   // 纸总长 40mm（自动扣掉固件固定多喂的 18mm）
   "vflip": false, "preheat": true
 }
 ```

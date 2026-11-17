@@ -108,6 +108,13 @@ async function encode(req) {
 
   let d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
 
+  // 内容高度（不含固件那 18mm）
+  if (req.lengthMm) {
+    const targetH = Math.round(parseFloat(req.lengthMm) * 8);
+    d = E.padRaw(d.raw, d.w, d.h, targetH);
+    log(`内容高度 ${req.lengthMm}mm → ${d.h} 点`, 'ok');
+  }
+
   // 纸总长：内容高度 = 总长 - 固件固定的 18mm
   if (req.totalMm) {
     const targetH = E.contentDotsForTotal(parseFloat(req.totalMm), 203);
@@ -115,11 +122,24 @@ async function encode(req) {
     log(`纸总长 ${req.totalMm}mm：内容 ${d.h} 点 (${(d.h / 8).toFixed(1)}mm) + 固件 18mm`, 'ok');
   }
 
-  const job = E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true, topDown: !req.vflip });
-  // 图片必须有终止帧才会出纸；行数可调（0 = 不额外走纸，但可能打不出来）
+  // 超过单任务上限就切页（实测 400 行能完整打，480 行只出一行）
+  const slices = E.paginateRaw(d.raw, d.w, d.h, E.MAX_ROWS_PER_JOB);
+  if (slices.length > 1) {
+    log(`图高 ${d.h} 行 > 单任务上限 ${E.MAX_ROWS_PER_JOB} 行 → 分 ${slices.length} 页（页间有固件 18mm 空隙）`, 'warn');
+  }
+
   const feedLines = Math.max(0, Math.min(8, parseInt(req.feedLines, 10) || 0));
+  const pages = slices.map((slice) => {
+    const pageJob = E.jobFromRaw(slice.raw, slice.w, slice.h, 'bmp', { official: true, topDown: !req.vflip });
+    if (feedLines > 0) pageJob.frames = pageJob.frames.concat(E.feedJob(feedLines).frames);
+    return pageJob;
+  });
+
+  // job 本身保持「整图」—— 预览要用完整位图；打印时走 job.pages
+  const job = E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true, topDown: !req.vflip });
   if (feedLines > 0) job.frames = job.frames.concat(E.feedJob(feedLines).frames);
   job.raw = d.raw;
+  job.pages = pages;
   return job;
 }
 

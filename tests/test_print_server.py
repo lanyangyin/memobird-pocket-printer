@@ -153,10 +153,18 @@ check("有纸时 checkPaper 通过", code == 200, str(code))
 service.paper_state = orig_paper
 
 # 设备信息/控灯：fake 后端应该明确拒绝（而不是假装成功）
+# /feed 默认按「纸总长」算：20mm 纸 = 内容 2mm（16 点）+ 固件 18mm
 code, body = req("POST", "/feed", {"mm": 20})
 check("POST /feed 200", code == 200 and body.get("ok") is True, str(code))
-check("走纸 20mm = 160 点", body.get("meta", {}).get("dots") == 160, str(body.get("meta", {}).get("dots")))
-check("走纸帧数 8", body.get("frames") == 8, str(body.get("frames")))
+check("走纸 20mm 纸总长 → 内容 16 点", body.get("meta", {}).get("dots") == 16,
+      str(body.get("meta", {}).get("dots")))
+check("走纸 20mm → 1 帧", body.get("frames") == 1, str(body.get("frames")))
+
+# total=false 才是「内容 N 毫米」（20mm 内容 = 160 点 = 8 帧）
+code, body = req("POST", "/feed", {"mm": 20, "total": False})
+check("走纸 20mm 内容 → 160 点", body.get("meta", {}).get("dots") == 160,
+      str(body.get("meta", {}).get("dots")))
+check("走纸 20mm 内容 → 8 帧", body.get("frames") == 8, str(body.get("frames")))
 code, body = req("POST", "/feed", {"lines": 3})
 check("POST /feed lines 200", code == 200 and body.get("meta", {}).get("lines") == 3)
 

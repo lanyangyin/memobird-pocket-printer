@@ -366,8 +366,15 @@ class PrintService:
         from memobird_printer.paper import blank_frames, line_frames
 
         if req.get("mm") is not None:
-            frames, meta = blank_frames(mm=float(req["mm"]), dpi=int(req.get("dpi") or 203),
-                                        tick=bool(req.get("tick")))
+            from memobird_printer.paper import OVERHEAD_MM
+
+            want = float(req["mm"])
+            frames, meta = blank_frames(mm=want, dpi=int(req.get("dpi") or 203),
+                                        tick=bool(req.get("tick")),
+                                        total=bool(req.get("total", True)))
+            if want <= OVERHEAD_MM:
+                meta["note"] = (f"固件每个任务固定多喂 {OVERHEAD_MM:.0f}mm，"
+                                f"所以最小出纸约 {OVERHEAD_MM + 1:.0f}mm；本次按最小内容算")
         else:
             frames, meta = line_frames(int(req.get("lines") or 3))
 

@@ -63,6 +63,9 @@ def main(argv: list[str] | None = None) -> int:
     html = re.sub(r'\s*<link rel="stylesheet"[^>]*>', "", html)
     html = re.sub(r'\s*<script src="[^"]*"></script>', "", html)
     html = html.replace("</head>", f"<style>\n{css}\n</style>\n</head>")
+    # 版本号：静态页读库版本 + 前端版本，写进页面标题栏
+    STATIC_VERSION = "1.1.0"
+    html = html.replace("__STATIC_VER__", STATIC_VERSION)
     banner = "<script>window.MB_STANDALONE = true;</script>\n<script>\n" + safe_script(js) + "\n</script>\n"
     html = html.replace("</body>", banner + "</body>")
 

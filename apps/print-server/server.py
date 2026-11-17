@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 

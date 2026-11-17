@@ -46,7 +46,7 @@ from memobird_printer.image import (                     # noqa: E402
 )
 
 WEB_DIR = HERE
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -378,7 +378,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         ext = os.path.splitext(full)[1].lower()
         with open(full, "rb") as f:
-            self._send(200, f.read(), MIME.get(ext, "application/octet-stream"))
+            data = f.read()
+        # 页面里的 __VER__ 换成实际版本号（标题栏显示用）
+        if ext in (".html", ".htm"):
+            data = data.replace(b"__VER__", VERSION.encode())
+        self._send(200, data, MIME.get(ext, "application/octet-stream"))
 
 
 def main(argv=None) -> int:

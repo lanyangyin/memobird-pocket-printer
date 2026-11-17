@@ -444,7 +444,10 @@ def cmd_cloud_text(args) -> int:
 
 # --------------------------------------------------------------------------- #
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
+
     ap = argparse.ArgumentParser(prog="memobird_printer", description="咕咕机 / 有道口袋打印机 通用 Python 控制")
+    ap.add_argument("--version", action="version", version=f"memobird_printer {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("selftest", help="无硬件自检")

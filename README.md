@@ -97,6 +97,12 @@ python -m memobird_printer preview "文本" -o p.png       # 本地看抖动效�
 | `lan.py` | WiFi 机型 `http://<ip>/sys/printer` |
 | `cloud.py` | 咕咕机开放平台 `open.memobird.cn` |
 
+## 版本
+
+* Python 库 / CLI：**1.1.0**（`python -m memobird_printer --version`）
+* 静态网页：**1.1.0** · 服务端网页：**2.1.0** · 打印服务：**1.1.0**
+* 详见 [`docs/更新日志.md`](docs/更新日志.md)
+
 ## 定时 / 远程打印
 
 ```bash

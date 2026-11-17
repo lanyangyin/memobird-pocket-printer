@@ -138,6 +138,9 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
     bmp = raw_to_bmp(w, h, raw, official=True, top_down=not req.get("vflip"))
     job = packet.build_bmp_job(bmp)
     frames = list(job.frames)
+    # 提交帧：让固件把位图真正打出来（不驱动电机 ⇒ 不多走纸）
+    if not req.get("exact"):
+        frames.append(packet.commit_frame())
     if feed:
         frames += packet.feed_job(3).frames
     return frames, {"format": "bmp", "chunks": job.chunks, "bytes": len(bmp),

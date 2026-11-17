@@ -133,6 +133,9 @@
 
   /** cmd 0x01：读状态（详版）。校验和已算好：aa 01 00 01 54 */
   const STATUS_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x01, 0x54]);
+  /** cmd 0x08：提交/结束任务（不驱动电机，但能让固件把位图打出来） */
+  const COMMIT_FRAME = buildFrame(0x08, new Uint8Array(0));
+
   /** cmd 0x09：读序列号 */
   const SERIAL_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x09, 0x4c]);
 
@@ -260,7 +263,7 @@
     serviceCharacteristics, collectCharacteristics, pickWrite, parseFrame, dumpGatt,
     isWritable, isNotifiable,
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
-    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
+    DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
   };
 });

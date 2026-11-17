@@ -36,6 +36,7 @@ MAGIC_SUM = 0x56
 CMD_STATUS = 0x01
 CMD_CONTROL = 0x03
 CMD_PRINT = 0x04
+CMD_COMMIT = 0x08      # 提交/结束任务（实测不驱动电机，但能让固件把位图打出来）
 
 TAG_TEXT = 0x07
 TAG_BITMAP = 0x08
@@ -57,6 +58,15 @@ PREHEAT = 2048            # 打印前需先发 2×1024 字节 0x00 预热
 def checksum(body: bytes) -> int:
     """body = LEN(2) + CMD(1) + PAYLOAD"""
     return (MAGIC_SUM - sum(body)) & 0xFF
+
+
+def commit_frame() -> bytes:
+    """提交/结束当前打印任务的信号（cmd 0x08）。
+
+    实测：**不驱动电机**，但能让固件把已收到的位图真正打出来。
+    图片帧本身没有结束标记，用它收尾既能完整打印、又不会多走纸。
+    """
+    return build_frame(CMD_COMMIT)
 
 
 def build_frame(cmd: int, payload: bytes = b"") -> bytes:

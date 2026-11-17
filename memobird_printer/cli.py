@@ -298,10 +298,13 @@ def cmd_print(args) -> int:
                     await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
                 # 图片帧没有结束标记：用状态查询当终结帧 → 零走纸
                 if not (getattr(args, "text", None) and not _image_path(args)):
-                    term = "none" if getattr(args, "exact", False) else getattr(args, "terminator", "status")
+                    term = "none" if getattr(args, "exact", False) else getattr(args, "terminator", "commit")
                     if term == "feed":
                         await asyncio.sleep(0.3)
                         await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
+                    elif term == "commit":
+                        await asyncio.sleep(0.2)
+                        await b.transact(packet.commit_frame(), wait=0.6, retries=1)
                     elif term == "status":
                         await asyncio.sleep(0.15)
                         await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.5, retries=1)
@@ -513,8 +516,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
         p.add_argument("--exact", action="store_true",
                        help="内容结束立刻停：不补白、不打后走纸、不发终结帧（可能打不出大图）")
-        p.add_argument("--terminator", default="status", choices=["feed", "status", "none"],
-                       help="图片的终结帧：status=状态查询(默认，零走纸) / feed=走纸 / none=不发")
+        p.add_argument("--terminator", default="commit",
+                       choices=["commit", "feed", "status", "none"],
+                       help="终结帧：commit=cmd 0x08 提交(默认，不驱动电机) / status=状态查询 / "
+                            "feed=走纸 / none=不发（大图会出白纸）")
         p.add_argument("--segment-mm", type=float, default=0,
                        help="长图分段打印，每段毫米数（>0 启用；绕过 BLE 吞吐不足）")
         return p

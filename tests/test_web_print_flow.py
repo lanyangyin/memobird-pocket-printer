@@ -238,8 +238,7 @@ def main() -> int:
         settings = json.loads(cdp.eval("JSON.stringify(window.__CAP__.settings)"))
         check("浓度：先设 6 再恢复 10", settings, [6, 10])
         queries = json.loads(cdp.eval("JSON.stringify(window.__CAP__.queries)"))
-        status_hex = cdp.eval("window.__STATUS_HEX__", await_promise=False)
-        check("终结帧是状态查询", queries, [status_hex])
+        check("终结帧是提交帧 cmd 0x08", queries, ["aa0100084d"])
 
         # 6. 分页时逐页发送（3 页 = 3 次 sendJob）
         cdp.eval("window.__CAP__.jobs.length = 0; true", await_promise=False)

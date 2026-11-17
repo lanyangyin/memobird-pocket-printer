@@ -191,13 +191,14 @@ class BlePrinter:
         await self.send_frames(job.frames, preheat=True)
 
     async def print_raw_image(self, raw: bytes, *, preheat: bool = True,
-                              terminator: str = "status", feed_lines: int = 0) -> None:
+                              terminator: str = "commit", feed_lines: int = 0) -> None:
         """打印 1bpp 裸位图。
 
         图片帧本身没有"结束标记"，实测不补一帧固件不会真正出纸。
         终结帧三选一：
 
-        * "status" —— 发一条状态查询（**默认**）：给固件"任务结束"信号，不驱动电机 ⇒ 零走纸
+        * "commit" —— 发 cmd 0x08 提交帧（**默认**）：固件把数据打出来，且不驱动电机
+        * "status" —— 发一条状态查询：也能结束任务，但实测会多走约 7mm
         * "feed"   —— 发 N 个换行（会送出 N 行空白，N=3 约 12mm）
         * "none"   —— 不发：小图能打，**大图会中途断**（实测 23 帧只出第一根刻度）
         """
@@ -206,6 +207,9 @@ class BlePrinter:
         if terminator == "feed":
             await asyncio.sleep(0.3)
             await self.send_frames(packet.feed_job(feed_lines).frames, preheat=False)
+        elif terminator == "commit":
+            await asyncio.sleep(0.2)
+            await self.transact(packet.commit_frame(), wait=0.6, retries=1)
         elif terminator == "status":
             await asyncio.sleep(0.15)
             await self.transact(packet.build_frame(packet.CMD_STATUS), wait=0.4, retries=1)

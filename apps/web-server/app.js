@@ -38,6 +38,7 @@ const textReq = () => ({
   format: 'gbk',
   darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
+  feedLines: parseInt($('#feed-lines').value, 10) || 0,
   totalMm: totalMm(),
 });
 
@@ -50,6 +51,7 @@ const imageReq = () => ({
   vflip: $('#vflip').checked,
   darken: parseInt($('#darken-image').value, 10),
   feed: $('#feed').checked,
+  feedLines: parseInt($('#feed-lines').value, 10) || 0,
   totalMm: totalMm(),
 });
 
@@ -153,7 +155,7 @@ $('#btn-print-image').addEventListener('click', () => {
 $('#btn-feed').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }
   const mm = parseFloat($('#feed-mm').value) || 0;
-  if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
+  if (mm <= 0) { log('走纸 0mm = 不走纸（已跳过）', 'ok'); return; }
   try {
     const j = await api('/api/feed', { mm, tick: true, total: true });
     $('#meta').textContent = `走纸 ${j.meta.mm}mm · ${j.meta.dots} 点 · ${j.frames.length} 帧`;

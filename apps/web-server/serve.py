@@ -235,7 +235,14 @@ def encode(req: dict) -> dict:
     if kind == "text" and fmt in ("", "gbk") and (darken > 0 or tier > 0):
         fmt = "bmp"
 
-    # ---- 文本：优先走 GBK 文本帧（体积最小、最快） ----
+    # ---- 文本：中文必须走位图 ----
+    # 这台固件的 GBK 文本帧没有中文字形，汉字会被渲染成"黑块"（实机确认）。
+    # 所以只要文本里有非 ASCII 字符，就强制走位图路径。
+    if kind == "text" and fmt in ("", "gbk") and any(ord(c) > 127 for c in (req.get("text") or "")):
+        print("[encode] 文本含中文/非 ASCII → 自动改走位图（GBK 文本帧无中文字形）", file=sys.stderr)
+        fmt = "bmp"
+
+    # ---- 文本：ASCII 走 GBK 文本帧（体积最小、最快） ----
     if kind == "text" and fmt in ("", "gbk"):
         text = req.get("text") or ""
         try:
@@ -246,8 +253,9 @@ def encode(req: dict) -> dict:
                 font_size=tier,
             )
             frames = [base64.b64encode(f).decode() for f in job.frames]
-            if req.get("feed"):
-                frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
+            feed_lines = int(req.get("feedLines") or (3 if req.get("feed", True) else 0))
+            if feed_lines > 0:
+                frames += [base64.b64encode(f).decode() for f in packet.feed_job(feed_lines).frames]
             return {
                 "frames": frames,
                 "meta": {"format": "gbk", "chunks": job.chunks, "bytes": job.total_bytes,
@@ -276,8 +284,9 @@ def encode(req: dict) -> dict:
     used = "bmp"
 
     frames = [base64.b64encode(f).decode() for f in job.frames]
-    if req.get("feed"):
-        frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
+    feed_lines = int(req.get("feedLines") or (3 if req.get("feed", True) else 1))
+    if feed_lines > 0:
+        frames += [base64.b64encode(f).decode() for f in packet.feed_job(feed_lines).frames]
 
     return {
         "frames": frames,

@@ -47,6 +47,7 @@ const textReq = () => ({
   format: $('#fmt-text').value,
   darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
+  feedLines: parseInt($('#feed-lines').value, 10) || 0,
   totalMm: totalMm(),
 });
 
@@ -58,6 +59,7 @@ const imageReq = () => ({
   vflip: $('#vflip').checked,
   darken: parseInt($('#darken-image').value, 10),
   feed: $('#feed').checked,
+  feedLines: parseInt($('#feed-lines').value, 10) || 0,
   totalMm: totalMm(),
 });
 
@@ -73,8 +75,14 @@ async function encode(req) {
     log(`已自动改走位图：${darken > 0 ? '浓度' : '字号'}只能在位图模式下生效`, 'warn');
   }
 
-  // 快路径：GBK 文本帧
-  if (useGbk && darken === 0 && tier === 0) {
+  // 中文/非 ASCII 必须走位图：这台固件的 GBK 文本帧没有中文字形，汉字会变黑块
+  const isAscii = !/[^\x00-\x7F]/.test(req.text || '');
+  if (useGbk && !isAscii) {
+    log('文本含中文 → 自动改走位图（GBK 文本帧无中文字形，会打成黑块）', 'warn');
+  }
+
+  // 快路径：GBK 文本帧（仅 ASCII）
+  if (useGbk && isAscii && darken === 0 && tier === 0) {
     const job = E.jobFromText(req.text || '', window.GBK.encode, {
       bold: req.bold, underline: req.underline, fontSize: 0,
     });
@@ -108,7 +116,9 @@ async function encode(req) {
   }
 
   const job = E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true, topDown: !req.vflip });
-  if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
+  // 图片必须有终止帧才会出纸；行数可调（0 = 不额外走纸，但可能打不出来）
+  const feedLines = Math.max(0, Math.min(8, parseInt(req.feedLines, 10) || 0));
+  if (feedLines > 0) job.frames = job.frames.concat(E.feedJob(feedLines).frames);
   job.raw = d.raw;
   return job;
 }
@@ -198,7 +208,7 @@ $('#btn-print-image').addEventListener('click', () => {
 $('#btn-feed').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }
   const mm = parseFloat($('#feed-mm').value) || 0;
-  if (mm <= 0) { log('走纸长度要大于 0', 'warn'); return; }
+  if (mm <= 0) { log('走纸 0mm = 不走纸（已跳过）', 'ok'); return; }
   try {
     const job = E.blankJob(mm, { tick: true, total: true });
     $('#meta').textContent = `走纸 ${job.meta.mm}mm · ${job.meta.dots} 点 · ${job.frames.length} 帧`;

@@ -238,8 +238,14 @@ def cmd_print(args) -> int:
                                                         packet.tlv(0x02, bytes([dens]))),
                                      wait=0.4, retries=1)
                     print(f"浓度：{restore} → {dens}（打完恢复）")
-                if getattr(args, "text", None) and not _image_path(args):
-                    job = packet.job_for_text(getattr(args, "text", None) or "")
+                text_arg = getattr(args, "text", None)
+                plain_ascii = bool(text_arg) and all(ord(c) < 128 for c in text_arg)
+                if text_arg and not _image_path(args) and plain_ascii:
+                    job = packet.job_for_text(text_arg)
+                elif text_arg and not _image_path(args):
+                    # 中文必须走位图：这台固件的 GBK 文本帧没有中文字形（实测打出来是黑块）
+                    print("文本含中文 → 改走位图（GBK 文本帧无中文字形）", file=sys.stderr)
+                    job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True))
                 else:
                     job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True))
                 seg_mm = getattr(args, "segment_mm", 0) or 0

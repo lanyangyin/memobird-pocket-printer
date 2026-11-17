@@ -199,19 +199,31 @@ def main() -> int:
         check("挑到 ff01", got_ble["notify"], "0000ff01-0000-1000-8000-00805f9b34fb")
         check("特征值计数", got_ble["count"], 2)
 
-        # 2) 文字 GBK 帧：与 Python 逐字节比对
-        print("\n2) 浏览器内编码（文字 → GBK 帧）")
+        # 2) ASCII 文字走 GBK 帧：与 Python 逐字节比对
+        #    中文不走这条路 —— 这台固件的 GBK 文本帧没有中文字形，会打成黑块，
+        #    所以代码把非 ASCII 强制改走位图（见第 3 项）。
+        print("\n2) 浏览器内编码（ASCII → GBK 帧）")
         js = """(async () => {
-          const j = await encode({kind:'text', text:'你好', format:'gbk'});
+          const j = await encode({kind:'text', text:'Hello', format:'gbk'});
           return JSON.stringify({
             hex: Array.from(j.frames[0], b => b.toString(16).padStart(2,'0')).join(''),
             chunks: j.meta.chunks, bytes: j.meta.bytes, format: j.meta.format,
           });
         })()"""
         got = json.loads(cdp.eval(js))
-        want_frame = packet.job_for_text("你好", encoding="gbk").frames[0].hex()
+        want_frame = packet.job_for_text("Hello", encoding="gbk").frames[0].hex()
         check("帧 hex 与 Python 一致", got["hex"], want_frame)
         check("meta.format", got["format"], "gbk")
+
+        # 2b) 中文必须走位图
+        print("\n2b) 中文自动改走位图（GBK 文本帧无中文字形）")
+        js_cn = """(async () => {
+          const j = await encode({kind:'text', text:'中文测试', format:'gbk', feedLines:3});
+          return JSON.stringify({format: j.meta.format, chunks: j.meta.chunks});
+        })()"""
+        cn = json.loads(cdp.eval(js_cn))
+        check("中文 → format=bmp", cn["format"], "bmp")
+        check("中文 → 有内容帧", cn["chunks"] > 0, True)
 
         # 3) 文字转位图（不依赖 GBK 的路径）
         print("\n3) 浏览器内编码（文字 → 位图 → BMP 任务）")

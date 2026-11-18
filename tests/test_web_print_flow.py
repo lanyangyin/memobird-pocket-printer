@@ -242,6 +242,18 @@ def main() -> int:
         queries = json.loads(cdp.eval("JSON.stringify(window.__CAP__.queries)"))
         check("终结帧是提交帧 cmd 0x08", queries, ["aa0100084d"])
 
+        # 5a. 预览也要包含固件固定的 11mm 上下边距（所见即所得）
+        prev = cdp.eval("""(async () => {
+          await preview({kind:'text', text:'Hello', format:'bmp'});
+          const img = document.querySelector('#preview');
+          await new Promise((r) => { if (img.complete && img.naturalHeight) r(); else img.onload = r; });
+          const j = await encode({kind:'text', text:'Hello', format:'bmp'});
+          return { prevH: img.naturalHeight, contentRows: j.meta.height };
+        })()""")
+        # 预览图放大了 2 倍，所以高度是"（内容 + 11mm + 7mm）× 2"
+        check("预览高度 = (内容 + 11mm + 7mm) × 2", prev["prevH"],
+              (prev["contentRows"] + 88 + 56) * 2)
+
         # 5b. 底层：任意帧发送 / 命令构造 / GATT 列表
         cdp.eval("window.__CAP__.queries.length = 0; true", await_promise=False)
         raw = cdp.eval("""(async () => {

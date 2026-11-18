@@ -375,6 +375,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/preview":
                 w, h, raw = _render(body)
+                # 预览也画上固件固定的上下边距（11mm / 7mm），所见即所得
+                from memobird_printer.paper import preview_padded
+
+                raw, w, h, _top = preview_padded(raw, w, h)
                 from memobird_printer.image import _raw_to_1bit
                 im = _raw_to_1bit(w, h, raw).convert("L")
                 buf = __import__("io").BytesIO()

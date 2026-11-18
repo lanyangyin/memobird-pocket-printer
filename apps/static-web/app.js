@@ -142,8 +142,13 @@ async function encode(req) {
 }
 
 async function preview(req) {
-  const job = await encode({ ...req, format: req.kind === 'image' ? 'bmp' : 'bmp' });
-  $('#preview').src = R.rawToDataURL(job.meta.width, job.meta.height, job.raw, 2);
+  const job = await encode({ ...req, format: 'bmp' });
+  // 预览也画上固件固定的上下边距（11mm / 7mm），看到的就是打出来的样子
+  const padded = R.padWithMargins(job.raw, job.meta.width, job.meta.height);
+  $('#preview').src = R.rawToDataURL(padded.w, padded.h, padded.raw, 2);
+  const contentMm = (job.meta.height / 8).toFixed(1);
+  const totalMm = (padded.h / 8).toFixed(1);
+  $('#meta').textContent = `上 11mm + 内容 ${contentMm}mm + 下 7mm = 总长 ${totalMm}mm`;
 }
 
 /* --------------------------------------------------------------- 打印 */

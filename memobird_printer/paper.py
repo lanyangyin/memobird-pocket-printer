@@ -24,6 +24,10 @@ DOTS_PER_MM_203 = 8.0        # 203 dpi / 25.4mm ≒ 8 dots/mm
 # 所以「出纸总长 = 内容高度 + OVERHEAD_MM」——想要总长 N，内容就画 N-18。
 OVERHEAD_MM = 18.0
 
+# 固件固定开销拆开（实机量的）：任务开始喂 11mm、结束喂 7mm
+TOP_MARGIN_MM = 11.0
+BOTTOM_MARGIN_MM = 7.0
+
 # 单个打印任务能完整打出的最大高度。
 # 注意：早期实测"400 行以上会断"其实是**丢数据**（发送太快、固件缓冲吃不下），
 # 修好"逐帧流控 + 提交前等最后一帧 ack"之后，496 行（62mm）和 800 行（100mm）
@@ -146,3 +150,19 @@ def paginate(img, max_rows: int = MAX_ROWS_PER_JOB):
     if h <= max_rows:
         return [img]
     return [img.crop((0, y, w, min(y + max_rows, h))) for y in range(0, h, max_rows)]
+
+
+# --------------------------------------------------------------------------- #
+# 预览用：把上下边距也画出来（所见即所得）
+# --------------------------------------------------------------------------- #
+def preview_padded(raw: bytes, w: int, h: int, dpi: int = 203):
+    """把内容上下补上固件固定的 11mm / 7mm 白边，返回 (raw, w, H, top_rows)。
+
+    这样预览图和真正打出来的纸一样长，用户能直观看到"内容 + 上下留白"。
+    """
+    row_bytes = (w + 7) // 8
+    top = mm_to_dots(TOP_MARGIN_MM, dpi)
+    bottom = mm_to_dots(BOTTOM_MARGIN_MM, dpi)
+    out = bytearray(row_bytes * (top + h + bottom))
+    out[top * row_bytes:(top + h) * row_bytes] = raw[: row_bytes * h]
+    return bytes(out), w, top + h + bottom, top

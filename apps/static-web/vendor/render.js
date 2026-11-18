@@ -132,6 +132,16 @@
   }
 
   /** 1bpp 裸位图 → dataURL（预览用，放大 scale 倍） */
+  /** 内容上下补固件固定的 11mm / 7mm 白边，返回 {raw, w, h, top} */
+  function padWithMargins(raw, w, h, topRows, bottomRows) {
+    const rowBytes = (w + 7) >> 3;
+    const top = topRows == null ? 11 * 8 : topRows;
+    const bottom = bottomRows == null ? 7 * 8 : bottomRows;
+    const out = new Uint8Array(rowBytes * (top + h + bottom));
+    out.set(raw.subarray(0, rowBytes * h), top * rowBytes);
+    return { raw: out, w, h: top + h + bottom, top };
+  }
+
   function rawToDataURL(w, h, raw, scale) {
     scale = scale || 2;
     const rb = (w + 7) >> 3;
@@ -154,5 +164,5 @@
     return canvas.toDataURL('image/png');
   }
 
-  root.MBRender = { W, textToGray, imageToGray, calibrationGray, rawToDataURL };
+  root.MBRender = { W, textToGray, imageToGray, calibrationGray, rawToDataURL, padWithMargins };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

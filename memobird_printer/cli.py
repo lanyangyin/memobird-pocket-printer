@@ -539,7 +539,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-paginate", action="store_true",
                        help="不按 400 行分页，整张一次发（排查固件上限用）")
         p.add_argument("--exact", action="store_true",
-                       help="内容结束立刻停：不补白、不打后走纸、不发终结帧（可能打不出大图）")
+                       help="诊断用：不补白、不发终结帧（实测并不能省掉尾部 7mm）")
         p.add_argument("--terminator", default="commit",
                        choices=["commit", "feed", "status", "none"],
                        help="终结帧：commit=cmd 0x08 提交(默认，不驱动电机) / status=状态查询 / "

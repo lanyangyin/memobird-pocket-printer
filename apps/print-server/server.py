@@ -200,14 +200,29 @@ class BleWorker:
         return fut.result(timeout=timeout)
 
     async def _send(self, frames: list[bytes], preheat: bool, flow: bool = True,
-                    window: int = 1, chunk: int = 180, settle: float = 0.002):
+                    window: int = 1, chunk: int = 180, settle: float = 0.002,
+                    density: int = 0):
         from memobird_printer import device as _dev
         from memobird_printer.ble import BlePrinter
 
         async with BlePrinter(self.target, settle=settle, chunk=chunk,
                               window=window, echo=False) as dev:
+            # 浓度就在同一条连接里设/恢复，省掉额外两次连接
+            before = None
+            if density:
+                before = dev.initial_paper is not None and None  # 占位，见下
+                infos = await _dev.read_info(dev, detail=False, wait=1.5, attempts=2)
+                cur = infos[-1].value(0x02) if infos else None
+                if cur is not None and cur != density:
+                    await dev.transact(_dev.setting_frame(0x02, density), wait=0.6)
+                    before = cur
             await dev.send_frames(frames, preheat=preheat, inter_frame=0.02,
                                   wait_ack=True, flow_control=flow)
+            if before is not None:
+                try:
+                    await dev.transact(_dev.setting_frame(0x02, int(before)), wait=0.6)
+                except Exception:                              # noqa: BLE001
+                    pass
             # 顺带看固件在这期间推来的状态帧（0x0A）里有没有"缺纸"
             await asyncio.sleep(0.3)
             self.last_push_paper = _dev.paper_out_from_notifies(dev._notifies)
@@ -216,11 +231,14 @@ class BleWorker:
                 self.last_push_paper = getattr(dev, "initial_paper", None)
             self.last_push_paper_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    def send(self, frames: list[bytes], preheat: bool, timeout: float = 180,
+    def send(self, frames: list[bytes], preheat: bool, timeout: float | None = None,
              flow: bool = True, window: int = 1, chunk: int = 180, settle: float = 0.002,
-             bmp_chunk: int = 1024):
-        return self.call(self._send(frames, preheat, flow, window, chunk, settle),
-                         timeout)
+             bmp_chunk: int = 1024, density: int = 0):
+        # 帧多的时候要多给时间（实测约 3.5 秒/帧）
+        if timeout is None:
+            timeout = max(180.0, 20.0 + len(frames) * 8.0)
+        return self.call(self._send(frames, preheat, flow, window, chunk, settle,
+                                    density), timeout)
 
     async def _read_info(self) -> tuple[list[dict], bool | None]:
         from memobird_printer import device
@@ -483,6 +501,11 @@ class PrintService:
                 try:
                     if self.pending_reprint:
                         self.monitor_paper_loop()
+                    elif self.last_job:
+                        if self.paper_state() is True:
+                            self.mark_pending_reprint(self.last_job["req"],
+                                                      self.last_job["meta"])
+                        self.last_job = None
 
                 except Exception:                              # noqa: BLE001
                     pass
@@ -522,24 +545,12 @@ class PrintService:
 
             frames, meta = build_frames(req)
 
-            # 浓度：硬件 0x02（1..10），打印前设置、打完恢复
+            # 浓度交给 worker 在**同一条连接**里处理（省掉额外连接）
             req_density = int(req.get("density") if req.get("density") is not None else 10)
-            density_before = None
             can_set_density = (self.backend == "ble" and isinstance(self.worker, BleWorker)
                                and not isinstance(self.worker, FakeWorker))
-            if req_density and can_set_density:
-                # 注意：这里不要加 self.lock —— print_request 外层已经持有（Lock 不可重入）
-                # 先读原值（set_setting 返回的是写入后的状态，不能当原值用）
-                try:
-                    infos, _paper = self.worker.read_info(timeout=20)
-                    if infos:
-                        density_before = (infos[-1].get("fields", {}).get("0x02") or {}).get("int")
-                except Exception:                                  # noqa: BLE001
-                    density_before = None
-                self.worker.set_setting(0x02, max(1, min(10, req_density)))
-                meta["density"] = req_density
-                meta["densityBefore"] = density_before
-
+            density_before = None
+            meta["density"] = req_density if can_set_density else None
             opt = {"flow": not req.get("noFlow", False),
                    "window": int(req.get("window") or 1),
                    "chunk": int(req.get("chunk") or 180),
@@ -549,17 +560,12 @@ class PrintService:
                 result = self._print_lan(req, meta)
             else:
                 preheat = bool(req.get("preheat", True))
+                if can_set_density:
+                    opt["density"] = max(1, min(10, req_density))
                 self.worker.send(frames, preheat, **opt)
                 result = {"ok": True, "frames": len(frames),
                           "bytes_sent": sum(len(f) for f in frames) + (packet.PREHEAT if preheat else 0)}
 
-            # 恢复原浓度
-            if req_density and can_set_density and density_before is not None:
-                try:
-                    self.worker.set_setting(0x02, int(density_before))
-                    result["densityRestored"] = density_before
-                except Exception:                                  # noqa: BLE001
-                    result["densityRestoreError"] = True
 
             self.count += 1
             self.last = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "meta": meta,
@@ -581,7 +587,14 @@ class PrintService:
                     self.last_job = None
                 else:
                     self.pending_reprint = None
-                    self.last_job = None
+                    # 长任务可能在途中把纸用完 → 结束后单独确认一次
+                    if len(frames) >= 8:
+                        self.last_job = {"req": req, "meta": meta,
+                                         "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                         "suspectSince": time.time()}
+                        out["paperCheck"] = "打印较长，结束后会再确认一次是否缺纸"
+                    else:
+                        self.last_job = None
             return out
 
     # ------------------------------------------------------------------ #

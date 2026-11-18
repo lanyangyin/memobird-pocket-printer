@@ -51,14 +51,6 @@
             <option value="bayer">Bayer 网点</option>
           </select>
         </label>
-        <label>浓度
-          <select id="darken-text">
-            <option value="0">标准</option>
-            <option value="1">加深</option>
-            <option value="2">更黑</option>
-            <option value="3">最黑</option>
-          </select>
-        </label>
         <label class="chk"><input id="invert-text" type="checkbox"> 反色</label>
       </div>
       <div class="actions">
@@ -76,14 +68,6 @@
             <option value="atkinson">Atkinson（对比高）</option>
             <option value="bayer">Bayer 网点</option>
             <option value="threshold">阈值（线稿）</option>
-          </select>
-        </label>
-        <label>浓度
-          <select id="darken-image">
-            <option value="0">标准</option>
-            <option value="1">加深</option>
-            <option value="2">更黑</option>
-            <option value="3">最黑</option>
           </select>
         </label>
         <label class="chk"><input id="invert-image" type="checkbox"> 反色</label>
@@ -114,15 +98,18 @@
         <label>纸总长 <input id="total-mm" type="number" min="20" max="500" step="1" placeholder="留空=不限"> mm</label>
         <label>浓度
           <select id="density">
-            <option value="0">默认(10)</option>
-            <option value="3">3（最浅/最慢）</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
-            <option value="6" selected>6（推荐长图）</option>
-            <option value="7">7</option>
-            <option value="8">8</option>
-            <option value="10">10（最深/最快）</option>
-          </select>
+          <option value="0">跟随设备当前值</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6" selected>6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+        </select>
         </label>
       </div>
       <div class="actions">

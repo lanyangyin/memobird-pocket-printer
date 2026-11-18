@@ -114,6 +114,10 @@ def req(method, path, body=None, headers=None):
         return e.code, json.loads(e.read().decode() or "{}")
 
 
+# 浓度：fake 后端没有 0x02，应该安静忽略而不是报错
+code, body = req("POST", "/print", {"text": "density test", "density": 7})
+check("density 参数被接受（fake 下忽略）", code == 200 and body.get("ok") is True, str(code))
+
 # 收尾：默认只发提交帧，不额外走纸
 frames, meta = ps.build_frames({"text": "Hello"})
 check("文字默认以提交帧收尾", frames[-1].hex(), "aa0100084d")

@@ -250,7 +250,7 @@ class SppWorker:
         self.port = port
         self.baudrate = baudrate
 
-    def send(self, frames: list[bytes], preheat: bool, timeout: float = 180):
+    def send(self, frames: list[bytes], preheat: bool, timeout: float = 180, **_kw):
         from memobird_printer.ble import SppPrinter
 
         with SppPrinter(self.port, baudrate=self.baudrate) as dev:
@@ -261,7 +261,7 @@ class LanWorker:
     def __init__(self, host: str):
         self.host = host
 
-    def send(self, frames: list[bytes], preheat: bool, timeout: float = 60):
+    def send(self, frames: list[bytes], preheat: bool, timeout: float = 60, **_kw):
         """LAN 机型走 HTTP JSON，不是一个字节流 —— 这里把帧还原成内容重发。
         由于我们只在 LAN 后端下收到文本/图片，交给 LanPrinter 自己的接口更稳。"""
         raise NotImplementedError
@@ -274,7 +274,7 @@ class FakeWorker:
         self.verbose = verbose
         self.sent: list[dict] = []
 
-    def send(self, frames: list[bytes], preheat: bool, timeout: float = 10):
+    def send(self, frames: list[bytes], preheat: bool, timeout: float = 10, **_kw):
         self.sent.append({
             "frames": frames, "preheat": preheat, "time": time.time(),
             "bytes": sum(len(f) for f in frames),
@@ -329,6 +329,19 @@ class PrintService:
                 raise PrinterNotReady("打印机缺纸（0x06=1）—— 放好纸再试")
 
             frames, meta = build_frames(req)
+
+            # 浓度：硬件 0x02（1..10），打印前设置、打完恢复
+            req_density = int(req.get("density") or 0)
+            density_before = None
+            can_set_density = (self.backend == "ble" and isinstance(self.worker, BleWorker)
+                               and not isinstance(self.worker, FakeWorker))
+            if req_density and can_set_density:
+                with self.lock:
+                    state = self.worker.set_setting(0x02, max(1, min(10, req_density)))
+                density_before = state.get(0x02)
+                meta["density"] = req_density
+                meta["densityBefore"] = density_before
+
             opt = {"flow": not req.get("noFlow", False),
                    "window": int(req.get("window") or 1),
                    "chunk": int(req.get("chunk") or 180),
@@ -338,9 +351,18 @@ class PrintService:
                 result = self._print_lan(req, meta)
             else:
                 preheat = bool(req.get("preheat", True))
-                self.worker.send(frames, preheat)
+                self.worker.send(frames, preheat, **opt)
                 result = {"ok": True, "frames": len(frames),
                           "bytes_sent": sum(len(f) for f in frames) + (packet.PREHEAT if preheat else 0)}
+
+            # 恢复原浓度
+            if req_density and can_set_density and density_before is not None:
+                try:
+                    with self.lock:
+                        self.worker.set_setting(0x02, int(density_before))
+                    result["densityRestored"] = density_before
+                except Exception:                                  # noqa: BLE001
+                    result["densityRestoreError"] = True
 
             self.count += 1
             self.last = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "meta": meta,

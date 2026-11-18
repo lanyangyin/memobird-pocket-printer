@@ -45,7 +45,6 @@ const textReq = () => ({
   mode: $('#mode-text').value,
   invert: $('#invert-text').checked,
   format: $('#fmt-text').value,
-  darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
   feedLines: parseInt($('#feed-lines').value, 10) || 0,
   totalMm: totalMm(),
@@ -57,7 +56,6 @@ const imageReq = () => ({
   mode: $('#mode-image').value,
   invert: $('#invert-image').checked,
   vflip: $('#vflip').checked,
-  darken: parseInt($('#darken-image').value, 10),
   feed: $('#feed').checked,
   feedLines: parseInt($('#feed-lines').value, 10) || 0,
   totalMm: totalMm(),
@@ -67,12 +65,11 @@ const imageReq = () => ({
 /** 请求 → {frames:[Uint8Array], meta} ；raw 已附带（预览用） */
 async function encode(req) {
   const mode = req.mode || 'threshold';
-  const darken = Math.max(0, Math.min(3, parseInt(req.darken, 10) || 0));
   const tier = sizeTier(req.fontSize);
   const useGbk = req.kind !== 'image' && (req.format || 'gbk') === 'gbk';
 
-  if (useGbk && (darken > 0 || tier > 0)) {
-    log(`已自动改走位图：${darken > 0 ? '浓度' : '字号'}只能在位图模式下生效`, 'warn');
+  if (useGbk && tier > 0) {
+    log('已自动改走位图：字号只能在位图模式下生效', 'warn');
   }
 
   // 中文/非 ASCII 必须走位图：这台固件的 GBK 文本帧没有中文字形，汉字会变黑块
@@ -82,7 +79,7 @@ async function encode(req) {
   }
 
   // 快路径：GBK 文本帧（仅 ASCII）
-  if (useGbk && isAscii && darken === 0 && tier === 0) {
+  if (useGbk && isAscii && tier === 0) {
     const job = E.jobFromText(req.text || '', window.GBK.encode, {
       bold: req.bold, underline: req.underline, fontSize: 0,
     });
@@ -107,7 +104,7 @@ async function encode(req) {
     for (let i = 0; i < gray.length; i++) gray[i] = 255 - gray[i];
   }
 
-  let d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
+  let d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, 0);
 
   // 内容高度（不含固件那 18mm）
   if (req.lengthMm) {

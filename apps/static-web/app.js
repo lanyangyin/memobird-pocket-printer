@@ -154,7 +154,8 @@ async function preview(req) {
 }
 
 /* --------------------------------------------------------------- 打印 */
-async function print(req, label) {
+async function print(req, label, opts) {
+  opts = opts || {};
   if (!link.connected) { log('先点「连接打印机」', 'warn'); return; }
   const job = await encode(req);
 
@@ -206,6 +207,12 @@ async function print(req, label) {
         log(`重连后浓度已恢复为 ${restore}`, 'ok');
       } catch (e2) { log('恢复浓度失败：' + (e2.message || e2), 'warn'); }
     }
+  }
+
+
+  // 缺纸自动重打：重打本身不再触发检查
+  if (!opts.fromAutoReprint) {
+    await autoReprintIfNeeded(() => print(req, label, { fromAutoReprint: true }));
   }
 }
 
@@ -351,6 +358,60 @@ async function toggleLed(on) {
     if (state === null) log(on ? '已发开灯（状态没读回来）' : '已发关灯（状态没读回来）', 'warn');
     else log(`指示灯 = ${state}（${state ? '亮' : '灭'}）`, state === (on ? 1 : 0) ? 'ok' : 'warn');
   } catch (e) { log('灯操作失败：' + (e.message || e), 'err'); }
+}
+
+/* 记住「缺纸自动重打」开关（默认开） */
+(function initAutoReprintToggle() {
+  const el = $('#auto-reprint');
+  if (!el) return;
+  try {
+    const v = localStorage.getItem('mb.autoReprint');
+    el.checked = v == null ? true : v === '1';
+  } catch (e) { /* 隐私模式忽略 */ }
+  el.addEventListener('change', () => {
+    try { localStorage.setItem('mb.autoReprint', el.checked ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    log(`缺纸自动重打：${el.checked ? '开' : '关'}`, 'ok');
+  });
+})();
+
+/* ------------------------------------------------- 缺纸自动重打 */
+function autoReprintEnabled() {
+  const el = $('#auto-reprint');
+  return el ? el.checked : true;
+}
+
+/** 读一次缺纸标志：true=缺纸 / false=有纸 / null=读不到 */
+async function paperOutNow() {
+  try {
+    const frames = await link.query(window.MBBle.STATUS_FRAME, 500);
+    for (const f of frames) {
+      const p = window.MBBle.parseFrame(f);
+      if (!p || !p.tlvs) continue;
+      for (const t of p.tlvs) {
+        if (t.tag === 0x06 && t.len >= 1) return t.value[0] === 1;
+      }
+    }
+  } catch (e) { /* 读不到就当不知道 */ }
+  return null;
+}
+
+/** 打完检查：缺纸就等纸，有纸了重跑一次 rerun() */
+async function autoReprintIfNeeded(rerun) {
+  if (!autoReprintEnabled()) return;
+  const out = await paperOutNow();
+  if (out !== true) return;
+  log('检测到缺纸 —— 放好纸后会自动重打（每 3 秒检查一次）', 'warn');
+  for (let i = 0; i < 200; i++) {          // 最多等 10 分钟
+    await new Promise((r) => setTimeout(r, 3000));
+    if (!link.connected) { log('连接已断开，取消自动重打', 'warn'); return; }
+    const now = await paperOutNow();
+    if (now === false) {
+      log('检测到有纸 → 自动重打', 'ok');
+      try { await rerun(); } catch (e) { log('重打失败：' + (e.message || e), 'err'); }
+      return;
+    }
+  }
+  log('等纸超时，未自动重打', 'warn');
 }
 
 /* --------------------------------------------------------------- 底层 */

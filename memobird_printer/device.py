@@ -40,6 +40,7 @@ memobird_printer/device.py — 设备信息与设置（BLE 厂商协议）
 from __future__ import annotations
 
 import asyncio
+
 from dataclasses import dataclass, field
 
 from . import packet
@@ -248,6 +249,34 @@ def setting_frame(tag: int, value: int) -> bytes:
 async def read_info(link, *, detail: bool = True, wait: float = 1.5) -> list[DeviceInfo]:
     frames = await link.transact(status_frame(detail), wait=wait)
     return [i for i in (parse_status(f) for f in frames) if i and i.cmd in (CMD_STATUS_DETAIL, CMD_STATUS)]
+
+
+async def wait_for_paper(link, *, timeout: float | None = 300.0,
+                        interval: float = 3.0, on_tick=None) -> bool:
+    """等打印机重新装上纸。返回 True=已经有纸，False=超时/读不到。
+
+    timeout=None 表示一直等。on_tick(seconds, missing) 可以拿来做进度提示。
+    """
+    import time as _time
+
+    t0 = _time.monotonic()
+    while True:
+        elapsed = _time.monotonic() - t0
+        try:
+            infos = await read_info(link, detail=False, wait=1.0)
+            missing = paper_out(infos[-1] if infos else None)
+        except Exception:                                      # noqa: BLE001
+            missing = None                                     # 读不到就当不知道
+        if missing is False:                                   # 明确"有纸"
+            return True
+        if timeout is not None and elapsed >= timeout:
+            return False
+        if on_tick:
+            try:
+                on_tick(elapsed, missing)
+            except Exception:                                  # noqa: BLE001
+                pass
+        await asyncio.sleep(interval)
 
 
 async def read_serial(link, *, wait: float = 1.2) -> str | None:

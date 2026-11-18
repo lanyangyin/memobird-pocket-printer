@@ -124,7 +124,11 @@
         <button id="btn-device" class="ghost">读设备信息</button>
         </div>
 
-        <h3>底层操作</h3>
+          <h3>打印设置</h3>
+        <div class="row">
+          <label class="chk"><input id="auto-reprint" type="checkbox" checked> 缺纸自动重打（放纸后自动补打）</label>
+        </div>
+      <h3>底层操作</h3>
       <textarea id="raw-hex" rows="2" placeholder="任意帧，如 aa 01 00 01 54（读状态）"></textarea>
       <div class="actions">
         <button id="btn-raw" class="ghost">发送帧</button>

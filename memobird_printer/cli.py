@@ -246,6 +246,7 @@ def cmd_print(args) -> int:
                                          wait=0.4, retries=1)
                         print(f"浓度：{restore} → {dens}（打完恢复）")
 
+                sent_frames: list[bytes] = []      # 记下发过的帧，缺纸时重发
                 text_arg = getattr(args, "text", None)
                 is_text = bool(text_arg) and not _image_path(args)
                 plain_ascii = bool(text_arg) and all(ord(c) < 128 for c in text_arg)
@@ -253,6 +254,7 @@ def cmd_print(args) -> int:
                 if is_text and plain_ascii:
                     # 纯 ASCII：走固件文本帧（体积最小、最快）
                     job = packet.job_for_text(text_arg)
+                    sent_frames.extend(job.frames)
                     await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
                 else:
                     if is_text:
@@ -279,6 +281,7 @@ def cmd_print(args) -> int:
                               f"{'流控（完整但会顿）' if use_flow else '快速路径（连续）'}",
                               file=sys.stderr)
 
+                        sent_frames.extend(pjob.frames)
                         await b.send_frames(pjob.frames, preheat=preheat,
                                             inter_frame=getattr(args, "inter_frame", 0.03),
                                             wait_ack=use_flow, flow_control=use_flow)
@@ -301,6 +304,38 @@ def cmd_print(args) -> int:
                         await asyncio.sleep(0.15)
                         await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.4, retries=1)
 
+
+                # ---- 缺纸自动重打 ----
+                if getattr(args, "auto_reprint", True):
+                    from . import device as _dev
+                    infos = await _dev.read_info(b, detail=False, wait=1.0)
+                    missing = _dev.paper_out(infos[-1] if infos else None)
+                    if missing is True:
+                        wait_s = float(getattr(args, "wait_paper", 0) or 0)
+                        if wait_s <= 0:
+                            print("⚠ 检测到缺纸 —— 放好纸后需重打"
+                                  "（加 --wait-paper 300 可自动等纸重打）", file=sys.stderr)
+                        else:
+                            print(f"⚠ 缺纸，最多等 {wait_s:.0f} 秒…放纸后自动重打",
+                                  file=sys.stderr)
+                            got = await _dev.wait_for_paper(
+                                b, timeout=wait_s, interval=2.0,
+                                on_tick=lambda el, mis: print(
+                                    f"   等待中… {el:.0f}s（缺纸={mis}）", file=sys.stderr))
+                            if got:
+                                print("检测到有纸 → 自动重打", file=sys.stderr)
+                                if not b.is_connected:
+                                    await b.reconnect()
+                                for f in sent_frames:
+                                    await b.send_frames([f], preheat=False,
+                                                        inter_frame=0.02,
+                                                        wait_ack=True, flow_control=True)
+                                await asyncio.sleep(0.15)
+                                await b.transact(packet.build_frame(packet.CMD_STATUS),
+                                                 wait=0.4, retries=1)
+                                print("重打完成")
+                            else:
+                                print("等纸超时，未重打", file=sys.stderr)
 
               finally:
                 # 无论成功失败，都尽量把浓度恢复回去
@@ -663,6 +698,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-paginate", action="store_true", help="不分页，整张一次发")
         p.add_argument("--paginate-rows", type=int, default=None,
                        help="分页阈值（默认用 paper.MAX_ROWS_PER_JOB）")
+        p.add_argument("--auto-reprint", dest="auto_reprint", action="store_true", default=True,
+                       help="打完发现缺纸时，等放纸后自动重打（默认开）")
+        p.add_argument("--no-auto-reprint", dest="auto_reprint", action="store_false",
+                       help="关掉缺纸自动重打")
+        p.add_argument("--wait-paper", type=float, default=0,
+                       help="缺纸时最多等这么久（秒）再自动重打；0=只提示不重打")
         p.add_argument("--density", type=int, default=10,
                        help="打印浓度 1..10（默认 10，最深；传 0 = 不动设备当前值）")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")

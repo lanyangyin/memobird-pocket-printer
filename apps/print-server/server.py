@@ -55,7 +55,14 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
+
+# 缺纸自动重打（可在 /settings 里改，持久化到 settings.json）
+DEFAULT_SETTINGS = {
+    "autoReprint": True,      # 打印后发现缺纸 → 等纸回来自动重打
+    "paperPollSec": 3,        # 多久查一次有没有纸
+    "maxReprints": 3,         # 同一单最多自动重打几次
+}
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 
@@ -308,7 +315,8 @@ class FakeWorker:
 # 打印服务（含串行化，避免两次打印交织）
 # --------------------------------------------------------------------------- #
 class PrintService:
-    def __init__(self, backend: str, target: str, *, verbose: bool = False):
+    def __init__(self, backend: str, target: str, *, verbose: bool = False,
+                 settings_file: str | None = None):
         self.backend = backend
         self.target = target
         self.verbose = verbose
@@ -316,6 +324,11 @@ class PrintService:
         self.last: dict | None = None
         self.last_error: str | None = None
         self.count = 0
+        self.settings_file = settings_file
+        self._settings = self.load_settings()
+        self.pending_reprint: dict | None = None      # 缺纸后等着重打的那一单
+        self._monitor_stop = threading.Event()
+        self._monitor: threading.Thread | None = None
 
         if backend == "ble":
             self.worker = BleWorker(target)
@@ -327,6 +340,103 @@ class PrintService:
             self.worker = None      # LAN 直接走库的 LanPrinter，见 print_request
         else:
             raise ValueError(f"未知后端: {backend}")
+
+    # ------------------------------------------------------------------ #
+    # 设置（含"缺纸自动重打"）
+    # ------------------------------------------------------------------ #
+    def load_settings(self) -> dict:
+        cfg = dict(DEFAULT_SETTINGS)
+        path = getattr(self, "settings_file", None)
+        if path and os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    cfg.update(json.load(f) or {})
+            except Exception:                                  # noqa: BLE001
+                pass
+        return cfg
+
+    def save_settings(self, cfg: dict) -> None:
+        path = getattr(self, "settings_file", None)
+        if not path:
+            return
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    def settings(self) -> dict:
+        return dict(self._settings)
+
+    def update_settings(self, patch: dict) -> dict:
+        cfg = dict(self._settings)
+        if "autoReprint" in patch:
+            cfg["autoReprint"] = bool(patch["autoReprint"])
+        if "paperPollSec" in patch:
+            cfg["paperPollSec"] = max(1, min(60, int(patch["paperPollSec"])))
+        if "maxReprints" in patch:
+            cfg["maxReprints"] = max(0, min(10, int(patch["maxReprints"])))
+        self._settings = cfg
+        self.save_settings(cfg)
+        return cfg
+
+    def mark_pending_reprint(self, req: dict, meta: dict) -> dict:
+        """打印后发现缺纸：记下来，等有纸了自动重打"""
+        self.pending_reprint = {
+            "req": req,
+            "meta": meta,
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "attempts": 0,
+        }
+        return self.pending_reprint
+
+    def monitor_paper_loop(self) -> None:
+        """后台：等到有纸 → 自动重打；这就是"缺纸自动重打"的执行者"""
+        pending = self.pending_reprint
+        if not pending:
+            return
+        if pending["attempts"] >= int(self._settings.get("maxReprints", 3)):
+            return
+        try:
+            state = self.paper_state()
+        except Exception:                                      # noqa: BLE001
+            return
+        if state is not False:        # None=读不到 / True=还缺纸
+            return
+        req = pending["req"]
+        pending["attempts"] += 1
+        try:
+            out = self.print_request(req)          # 注意：print_request 内部已经 count += 1
+            self.last = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "autoReprint": True,
+                         "attempts": pending["attempts"], "result": {k: out.get(k) for k in ("ok", "frames")}}
+            self.pending_reprint = None
+        except Exception as exc:                               # noqa: BLE001
+            self.last_error = f"autoReprint: {type(exc).__name__}: {exc}"
+
+    # ------------------------------------------------------------------ #
+    # 后台线程：定时看有没有纸，有纸就把挂起的那单重打
+    # ------------------------------------------------------------------ #
+    def start_monitor(self) -> None:
+        if self._monitor and self._monitor.is_alive():
+            return
+        self._monitor_stop.clear()
+
+        def loop():
+            while not self._monitor_stop.is_set():
+                try:
+                    if self.pending_reprint:
+                        self.monitor_paper_loop()
+                except Exception:                              # noqa: BLE001
+                    pass
+                wait = float(self._settings.get("paperPollSec", 3))
+                self._monitor_stop.wait(max(1.0, wait))
+
+        self._monitor = threading.Thread(target=loop, name="paper-monitor", daemon=True)
+        self._monitor.start()
+
+    def stop_monitor(self) -> None:
+        self._monitor_stop.set()
 
     # ------------------------------------------------------------------ #
     def paper_state(self) -> bool | None:
@@ -395,6 +505,16 @@ class PrintService:
             self.last_error = None
             out = {"ok": True, "meta": meta, "elapsed_ms": self.last["elapsed_ms"]}
             out.update(result)
+
+            # 打完发现没纸（或纸在打的过程中用完了）→ 等纸回来自动重打
+            if self._settings.get("autoReprint", True):
+                paper = self.paper_state()
+                if paper is True:
+                    self.mark_pending_reprint(req, meta)
+                    out["paperOut"] = True
+                    out["autoReprint"] = "已挂起：检测到缺纸，放纸后会自动重打"
+                elif paper is False:
+                    self.pending_reprint = None
             return out
 
     # ------------------------------------------------------------------ #
@@ -421,6 +541,8 @@ class PrintService:
             "last": self.last,
             "last_error": self.last_error,
             "paper_out": getattr(self, "last_paper_out", None),
+            "pendingReprint": self.pending_reprint,
+            "settings": self.settings(),
         }
 
     def device_info(self) -> dict:
@@ -765,6 +887,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "error": "unauthorized"})
                 return
             self._json(200, self.service.status())
+        elif path == "/settings":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            self._json(200, {"ok": True, "settings": self.service.settings()})
+        elif path == "/reprint/cancel":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            had = self.service.pending_reprint is not None
+            self.service.pending_reprint = None
+            self._json(200, {"ok": True, "cancelled": had})
         elif path == "/gatt":
             if not self._authorized():
                 self._json(401, {"ok": False, "error": "unauthorized"})
@@ -813,6 +947,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+
+        # 设置：缺纸自动重打等
+        if path == "/settings":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                body = self._read_json()
+                cfg = self.service.update_settings(body)
+                self._json(200, {"ok": True, "settings": cfg})
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:                            # noqa: BLE001
+                self._json(500, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        if path == "/reprint/cancel":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            had = self.service.pending_reprint is not None
+            self.service.pending_reprint = None
+            self._json(200, {"ok": True, "cancelled": had})
+            return
 
         # 设备控制：只支持已验证的"开/关灯"
         if path == "/device/led":
@@ -910,6 +1068,10 @@ def main(argv=None) -> int:
                     help="可选的访问口令（请求头 X-Api-Key 或 ?key=）")
     ap.add_argument("--jobs-file", default="",
                     help="定时任务落盘文件（默认不落盘）")
+    ap.add_argument("--settings-file", default="",
+                    help="设置落盘文件（缺纸自动重打等）；默认不落盘")
+    ap.add_argument("--no-auto-reprint", action="store_true",
+                    help="关掉「缺纸后自动重打」（也可以在 /settings 里改）")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
 
@@ -918,6 +1080,11 @@ def main(argv=None) -> int:
         return 2
 
     service = PrintService(args.backend, args.target, verbose=args.verbose)
+    service.settings_file = args.settings_file or None
+    service._settings = service.load_settings()
+    if args.no_auto_reprint:
+        service._settings["autoReprint"] = False
+    service.start_monitor()
     queue = JobQueue(service, persistence=args.jobs_file or None)
     queue.start()
     Handler.service = service

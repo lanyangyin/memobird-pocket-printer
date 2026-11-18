@@ -240,7 +240,23 @@ def main() -> int:
         settings = json.loads(cdp.eval("JSON.stringify(window.__CAP__.settings)"))
         check("浓度：先设 6 再恢复 10", settings, [6, 10])
         queries = json.loads(cdp.eval("JSON.stringify(window.__CAP__.queries)"))
-        check("收尾帧是状态帧 cmd 0x01（不断连）", queries, ["aa01000154"])
+        # 第一条必须是收尾帧；之后可能还有"查缺纸"的状态帧（自动重打用）
+        check("收尾帧是状态帧 cmd 0x01（不断连）", queries[0] if queries else None, "aa01000154")
+        check("收尾之后的查询也都是状态帧", all(q == "aa01000154" for q in queries), True)
+
+        # 5z. 缺纸自动重打：开关存在、默认开、能解析缺纸帧
+        ar = cdp.eval("""(() => {
+          const el = document.querySelector('#auto-reprint');
+          return {
+            exists: !!el, checked: el && el.checked,
+            hasPaperOut: typeof paperOutNow === 'function',
+            hasAuto: typeof autoReprintIfNeeded === 'function',
+          };
+        })()""")
+        check("缺纸自动重打开关存在", ar["exists"], True)
+        check("缺纸自动重打默认开", ar["checked"], True)
+        check("有 paperOutNow()", ar["hasPaperOut"], True)
+        check("有 autoReprintIfNeeded()", ar["hasAuto"], True)
 
         # 5a. 预览也要包含固件固定的 11mm 上下边距（所见即所得）
         prev = cdp.eval("""(async () => {

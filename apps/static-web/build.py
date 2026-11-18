@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     html = re.sub(r'\s*<script src="[^"]*"></script>', "", html)
     html = html.replace("</head>", f"<style>\n{css}\n</style>\n</head>")
     # 版本号：静态页读库版本 + 前端版本，写进页面标题栏
-    STATIC_VERSION = "1.3.2"
+    STATIC_VERSION = "1.3.3"
     banner = "<script>window.MB_STANDALONE = true;</script>\n<script>\n" + safe_script(js) + "\n</script>\n"
     html = html.replace("</body>", banner + "</body>")
     # 最后统一替换版本占位符（HTML 和 app.js 里的都要换）

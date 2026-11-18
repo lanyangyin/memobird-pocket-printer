@@ -124,6 +124,38 @@ check("中文强制走位图", meta_cn["format"] == "bmp", meta_cn["format"])
 frames_en, meta_en = ps.build_frames({"text": "Hello"})
 check("纯 ASCII 走 GBK 快路径", meta_en["format"] == "gbk", meta_en["format"])
 
+# ---- 缺纸自动重打（假后端 + 假 paper_state，模拟"先缺纸、后放纸"）----
+svc2 = ps.PrintService("fake", "", verbose=False)
+svc2._settings = {"autoReprint": True, "paperPollSec": 1, "maxReprints": 3}
+svc2.paper_state = lambda: True          # 当前缺纸
+before = svc2.count
+out = svc2.print_request({"text": "wait for paper"})
+check("缺纸时打印仍返回 ok", out.get("ok") is True, str(out.get("ok")))
+check("缺纸会标记 pendingReprint", svc2.pending_reprint is not None, "pending")
+check("返回里说明会重打", "autoReprint" in out, str(list(out)))
+
+svc2.monitor_paper_loop()
+check("还缺纸时不重打", svc2.count == before + 1, str(svc2.count - before))
+
+svc2.paper_state = lambda: False         # 放纸了
+svc2.monitor_paper_loop()
+check("放纸后自动重打", svc2.count == before + 2, str(svc2.count - before))
+check("重打后清空 pending", svc2.pending_reprint is None, "cleared")
+
+svc3 = ps.PrintService("fake", "", verbose=False)
+svc3._settings = {"autoReprint": False, "paperPollSec": 1, "maxReprints": 3}
+svc3.paper_state = lambda: True
+svc3.print_request({"text": "no auto"})
+check("开关关掉后不挂起", svc3.pending_reprint is None, "none")
+
+svc2.paper_state = lambda: True
+svc2.print_request({"text": "again"})
+svc2.pending_reprint["attempts"] = 99
+svc2.paper_state = lambda: False
+cnt = svc2.count
+svc2.monitor_paper_loop()
+check("超过 maxReprints 不再重打", svc2.count == cnt, str(svc2.count - cnt))
+
 # 收尾：默认发状态帧 0x01（触发打印且不断连），不额外走纸
 frames, meta = ps.build_frames({"text": "Hello"})
 check("文字默认以状态帧收尾", frames[-1].hex() == "aa01000154", frames[-1].hex())

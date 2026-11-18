@@ -28,6 +28,10 @@ OVERHEAD_MM = 18.0
 TOP_MARGIN_MM = 11.0
 BOTTOM_MARGIN_MM = 7.0
 
+# 打印头 384 点 = 48mm；纸宽 57mm（456 点）→ 左右各 36 点（4.5mm）是纸边
+PRINT_WIDTH_DOTS = 384
+PAPER_WIDTH_DOTS = 456
+
 # 单个打印任务能完整打出的最大高度。
 # 注意：早期实测"400 行以上会断"其实是**丢数据**（发送太快、固件缓冲吃不下），
 # 修好"逐帧流控 + 提交前等最后一帧 ack"之后，496 行（62mm）和 800 行（100mm）
@@ -155,14 +159,30 @@ def paginate(img, max_rows: int = MAX_ROWS_PER_JOB):
 # --------------------------------------------------------------------------- #
 # 预览用：把上下边距也画出来（所见即所得）
 # --------------------------------------------------------------------------- #
-def preview_padded(raw: bytes, w: int, h: int, dpi: int = 203):
-    """把内容上下补上固件固定的 11mm / 7mm 白边，返回 (raw, w, H, top_rows)。
+def preview_padded(raw: bytes, w: int, h: int, dpi: int = 203, paper: bool = True):
+    """把内容补成"整张纸"的样子，返回 (raw, W, H, top_rows)。
 
-    这样预览图和真正打出来的纸一样长，用户能直观看到"内容 + 上下留白"。
+    * 上下补固件固定的 11mm / 7mm
+    * 左右补成纸宽（57mm）：打印头只有 48mm，两侧 4.5mm 是纸边
+
+    这样预览和真正打出来的纸一致，不会对两侧空白感到意外。
     """
-    row_bytes = (w + 7) // 8
+    src_row = (w + 7) // 8
     top = mm_to_dots(TOP_MARGIN_MM, dpi)
     bottom = mm_to_dots(BOTTOM_MARGIN_MM, dpi)
-    out = bytearray(row_bytes * (top + h + bottom))
-    out[top * row_bytes:(top + h) * row_bytes] = raw[: row_bytes * h]
-    return bytes(out), w, top + h + bottom, top
+    if not paper:
+        out = bytearray(src_row * (top + h + bottom))
+        out[top * src_row:(top + h) * src_row] = raw[: src_row * h]
+        return bytes(out), w, top + h + bottom, top
+
+    total_w = PAPER_WIDTH_DOTS
+    left = max(0, (total_w - w) // 2)
+    dst_row = (total_w + 7) // 8
+    out = bytearray(dst_row * (top + h + bottom))
+    for y in range(h):
+        srow = raw[y * src_row:(y + 1) * src_row]
+        for x in range(w):
+            if srow[x >> 3] & (0x80 >> (x & 7)):
+                px = left + x
+                out[(top + y) * dst_row + (px >> 3)] |= 0x80 >> (px & 7)
+    return bytes(out), total_w, top + h + bottom, top

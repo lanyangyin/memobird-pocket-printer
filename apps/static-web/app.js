@@ -147,8 +147,10 @@ async function preview(req) {
   const padded = R.padWithMargins(job.raw, job.meta.width, job.meta.height);
   $('#preview').src = R.rawToDataURL(padded.w, padded.h, padded.raw, 2);
   const contentMm = (job.meta.height / 8).toFixed(1);
+  const sideMm = ((456 - job.meta.width) / 2 / 8).toFixed(1);
   const totalMm = (padded.h / 8).toFixed(1);
-  $('#meta').textContent = `上 11mm + 内容 ${contentMm}mm + 下 7mm = 总长 ${totalMm}mm`;
+  $('#meta').textContent =
+      `纸 57mm（内容 ${contentMm}mm 居中，两侧各 ${sideMm}mm 纸边）· 上 11 + 下 7 = 总长 ${totalMm}mm`;
 }
 
 /* --------------------------------------------------------------- 打印 */

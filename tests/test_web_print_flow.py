@@ -248,11 +248,12 @@ def main() -> int:
           const img = document.querySelector('#preview');
           await new Promise((r) => { if (img.complete && img.naturalHeight) r(); else img.onload = r; });
           const j = await encode({kind:'text', text:'Hello', format:'bmp'});
-          return { prevH: img.naturalHeight, contentRows: j.meta.height };
+          return { prevH: img.naturalHeight, prevW: img.naturalWidth, contentRows: j.meta.height };
         })()""")
         # 预览图放大了 2 倍，所以高度是"（内容 + 11mm + 7mm）× 2"
         check("预览高度 = (内容 + 11mm + 7mm) × 2", prev["prevH"],
               (prev["contentRows"] + 88 + 56) * 2)
+        check("预览宽度 = 纸宽 57mm（456 点）× 2", prev["prevW"], 456 * 2)
 
         # 5b. 底层：任意帧发送 / 命令构造 / GATT 列表
         cdp.eval("window.__CAP__.queries.length = 0; true", await_promise=False)

@@ -132,14 +132,28 @@
   }
 
   /** 1bpp 裸位图 → dataURL（预览用，放大 scale 倍） */
-  /** 内容上下补固件固定的 11mm / 7mm 白边，返回 {raw, w, h, top} */
-  function padWithMargins(raw, w, h, topRows, bottomRows) {
-    const rowBytes = (w + 7) >> 3;
+  /**
+   * 补成"整张纸"的样子：上下加固件固定的 11mm / 7mm，左右补到纸宽 57mm。
+   * 打印头只有 48mm，两侧 4.5mm 是纸边 —— 预览如实呈现，避免以为被裁掉。
+   * 返回 {raw, w, h, top}
+   */
+  function padWithMargins(raw, w, h, topRows, bottomRows, paperWidth) {
+    const srcRow = (w + 7) >> 3;
     const top = topRows == null ? 11 * 8 : topRows;
     const bottom = bottomRows == null ? 7 * 8 : bottomRows;
-    const out = new Uint8Array(rowBytes * (top + h + bottom));
-    out.set(raw.subarray(0, rowBytes * h), top * rowBytes);
-    return { raw: out, w, h: top + h + bottom, top };
+    const totalW = paperWidth == null ? 456 : paperWidth;
+    const left = Math.max(0, (totalW - w) >> 1);
+    const dstRow = (totalW + 7) >> 3;
+    const out = new Uint8Array(dstRow * (top + h + bottom));
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (raw[y * srcRow + (x >> 3)] & (0x80 >> (x & 7))) {
+          const px = left + x;
+          out[(top + y) * dstRow + (px >> 3)] |= 0x80 >> (px & 7);
+        }
+      }
+    }
+    return { raw: out, w: totalW, h: top + h + bottom, top };
   }
 
   function rawToDataURL(w, h, raw, scale) {

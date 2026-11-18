@@ -66,9 +66,9 @@ def png_data_url(w=40, h=20) -> str:
 print("1) 纯逻辑：请求 → 帧")
 svc = ps.PrintService("fake", "", verbose=False)
 
-out = svc.print_request({"text": "服务器磁盘 85%"})
-check("文本走 GBK 帧", out["meta"]["format"] == "gbk", str(out["meta"]["format"]))
-check("含 1 帧内容 + 1 帧走纸", out["frames"] == 2, str(out["frames"]))
+out = svc.print_request({"text": "disk 85% full"})
+check("ASCII 文本走 GBK 帧", out["meta"]["format"] == "gbk", str(out["meta"]["format"]))
+check("含 1 帧内容 + 1 帧收尾", out["frames"] == 2, str(out["frames"]))
 sent = svc.worker.sent[-1]
 check("帧头是 AA", sent["frames"][0][0] == 0xAA)
 check("预热度 2048", sent["preheat"] is True and packet.PREHEAT == 2048)
@@ -118,9 +118,15 @@ def req(method, path, body=None, headers=None):
 code, body = req("POST", "/print", {"text": "density test", "density": 7})
 check("density 参数被接受（fake 下忽略）", code == 200 and body.get("ok") is True, str(code))
 
+# 中文必须走位图（GBK 文本帧无中文字形，会打成黑块）
+frames_cn, meta_cn = ps.build_frames({"text": "中文测试"})
+check("中文强制走位图", meta_cn["format"] == "bmp", meta_cn["format"])
+frames_en, meta_en = ps.build_frames({"text": "Hello"})
+check("纯 ASCII 走 GBK 快路径", meta_en["format"] == "gbk", meta_en["format"])
+
 # 收尾：默认发状态帧 0x01（触发打印且不断连），不额外走纸
 frames, meta = ps.build_frames({"text": "Hello"})
-check("文字默认以状态帧收尾", frames[-1].hex(), "aa01000154")
+check("文字默认以状态帧收尾", frames[-1].hex() == "aa01000154", frames[-1].hex())
 check("文字默认没有走纸帧", all(b"\n\n" not in f for f in frames), "no-feed")
 
 frames2, _ = ps.build_frames({"text": "Hello", "feed": True, "feedLines": 2})
@@ -134,7 +140,7 @@ _buf = _io.BytesIO()
 _Image.new("L", (384, 40), 255).save(_buf, "PNG")
 _img_b64 = _b64.b64encode(_buf.getvalue()).decode()
 frames3, _ = ps.build_frames({"image": _img_b64})
-check("图片默认以状态帧收尾", frames3[-1].hex(), "aa01000154")
+check("图片默认以状态帧收尾", frames3[-1].hex() == "aa01000154", frames3[-1].hex())
 
 # 底层接口在 fake 后端应明确拒绝（而不是假装成功）
 for path, payload in (("/raw", {"hex": "aa01000154"}), ("/cmd", {"cmd": "0x08"})):

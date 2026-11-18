@@ -48,7 +48,8 @@ class BlePrinter:
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
                  settle: float = 0.02, timeout: float = 15.0, echo: bool = True,
-                 chunk: int = 180, batch: int = 1, window: int = 1):
+                 chunk: int = 180, batch: int = 1, window: int = 1,
+                 connect_retries: int = 4, connect_retry_delay: float = 1.5):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
@@ -56,6 +57,8 @@ class BlePrinter:
         self.timeout = timeout
         self.echo = echo
         self.chunk = max(20, int(chunk))
+        self.connect_retries = max(1, int(connect_retries))
+        self.connect_retry_delay = max(0.0, float(connect_retry_delay))
         self.batch = max(1, int(batch))     # 并发写入数（>1 提速，可能丢包）
         self.window = max(1, int(window))   # 流控窗口（1=逐帧等 ack，最稳）     # 每次 GATT 写入的字节数
         self._client = None
@@ -67,8 +70,21 @@ class BlePrinter:
     async def __aenter__(self):
         from bleak import BleakClient
 
-        self._client = BleakClient(self.address, timeout=self.timeout)
-        await self._client.connect()
+        # 打印机闲着就睡，直接连经常 "not found" —— 自动重试若干次
+        attempts = max(1, int(self.connect_retries))
+        last = None
+        for i in range(attempts):
+            self._client = BleakClient(self.address, timeout=self.timeout)
+            try:
+                await self._client.connect()
+                last = None
+                break
+            except Exception as exc:                       # noqa: BLE001
+                last = exc
+                if i + 1 < attempts:
+                    await asyncio.sleep(self.connect_retry_delay)
+        if last is not None:
+            raise last
         self._notifies.clear()
         self._rx.clear()
         self._chunks.clear()

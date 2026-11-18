@@ -66,6 +66,17 @@ class PrinterNotReady(Exception):
 # --------------------------------------------------------------------------- #
 # 编码：请求 → 帧（与实现 2 的服务端逻辑一致，但这里直接用库，不经 HTTP）
 # --------------------------------------------------------------------------- #
+def _num(val, what: str = "数字") -> int:
+    """宽松解析：支持 int / "3" / "0x03"。"""
+    if isinstance(val, bool):
+        return int(val)
+    if isinstance(val, int):
+        return val
+    if isinstance(val, str):
+        return int(val.strip(), 0)
+    raise ValueError(f"{what} 无法解析：{val!r}")
+
+
 def size_tier(font_size) -> int:
     try:
         px = int(font_size or 26)
@@ -94,8 +105,11 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
         text = req.get("text") or ""
         if not text.strip():
             raise ValueError("text 为空")
-        # 快路径：GBK 文本帧（默认字号、无浓度、无加粗/下划线时才用）
-        if darken == 0 and tier == 0 and not req.get("bold") and not req.get("underline"):
+        # 快路径：GBK 文本帧 —— **只有纯 ASCII 才安全**。
+        # 这版固件的 GBK 文本帧没有中文字形，中文会打成黑块，所以非 ASCII 一律走位图。
+        ascii_only = all(ord(ch) < 128 for ch in text)
+        if (ascii_only and darken == 0 and tier == 0
+                and not req.get("bold") and not req.get("underline")):
             try:
                 job = packet.job_for_text(text, encoding="gbk")
                 frames = list(job.frames)
@@ -224,7 +238,7 @@ class BleWorker:
 
         payload = b""
         for t in tlvs:
-            tag = int(t["tag"] if isinstance(t.get("tag"), int) else str(t["tag"]), 0)
+            tag = _num(t.get("tag"), "tag")
             if "hex" in t:
                 val = bytes.fromhex(str(t["hex"]).replace(" ", ""))
             else:
@@ -469,10 +483,15 @@ class PrintService:
 
         if self.backend == "fake":
             self.worker.send(frames, True)
-        elif self.backend == "ble":
-            with self.lock:
-                self.worker.send(frames, True, **opt)
-        elif self.backend == "spp":
+        elif self.backend in ("ble", "spp"):
+            # 走纸也可以传底层参数（分片/窗口/节奏）
+            opt = {
+                "flow": not req.get("noFlow", False),
+                "window": int(req.get("window") or 1),
+            }
+            if self.backend == "ble":
+                opt["chunk"] = int(req.get("chunk") or 180)
+                opt["settle"] = float(req.get("settle") or 0.002)
             with self.lock:
                 self.worker.send(frames, True, **opt)
         else:
@@ -496,7 +515,7 @@ class PrintService:
         """发命令 + TLV（底层）"""
         if self.backend != "ble" or not isinstance(self.worker, BleWorker):
             return {"ok": False, "error": "只有 ble 后端支持 cmd"}
-        cmd = int(req["cmd"] if isinstance(req.get("cmd"), int) else str(req.get("cmd")), 0)
+        cmd = _num(req.get("cmd"), "cmd")
         tlvs = req.get("tlv") or []
         with self.lock:
             lines = self.worker.cmd(cmd, tlvs)
@@ -754,7 +773,11 @@ class Handler(BaseHTTPRequestHandler):
                 out = self.service.gatt()
                 self._json(200 if out.get("ok") else 400, out)
             except Exception as exc:                             # noqa: BLE001
-                self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+                msg = f"{type(exc).__name__}: {exc}"
+                if "NotFound" in type(exc).__name__ or "not found" in str(exc).lower():
+                    msg += ("（GT1 同时只允许一个连接：若网页/手机 App 正连着，"
+                            "它就不再广播，请先在那边点「断开」再试；也可能是打印机在睡眠）")
+                self._json(503, {"ok": False, "error": msg})
         elif path == "/jobs":
             if not self._authorized():
                 self._json(401, {"ok": False, "error": "unauthorized"})

@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 
@@ -331,7 +331,7 @@ class PrintService:
             frames, meta = build_frames(req)
 
             # 浓度：硬件 0x02（1..10），打印前设置、打完恢复
-            req_density = int(req.get("density") or 0)
+            req_density = int(req.get("density") if req.get("density") is not None else 10)
             density_before = None
             can_set_density = (self.backend == "ble" and isinstance(self.worker, BleWorker)
                                and not isinstance(self.worker, FakeWorker))

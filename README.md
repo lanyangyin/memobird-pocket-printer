@@ -105,11 +105,12 @@ python -m memobird_printer preview "文本" -o p.png       # 本地看抖动效�
 
 ## 浓度（硬件 10 档）≠ 加粗（软件膨胀）
 
-`0x02` 的 1~10 是**打印头加热能量**（整体变深变浅，笔画不变）；
+`0x02` 的 1~10 是**打印头加热能量（默认 10）**（整体变深变浅，笔画不变）；
 而 `darken` 参数是把笔画膨胀（看起来像加粗）。界面上的「浓度」现在只走硬件 10 档。
 
 ```bash
-python -m memobird_printer text "测试" --density 6 --ble <地址>   # 硬件浓度，打完自动恢复
+python -m memobird_printer text "测试" --ble <地址>                 # 默认浓度 10
+python -m memobird_printer text "测试" --density 4 --ble <地址>   # 指定浓度，打完自动恢复
 ```
 
 ## 底层操作（固件能做的都能驱）

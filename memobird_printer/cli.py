@@ -236,11 +236,15 @@ def cmd_print(args) -> int:
                 if dens:
                     from . import device as _dev
                     infos = await _dev.read_info(b, detail=False, wait=1.2)
-                    restore = infos[-1].value(0x02) if infos else 10
-                    await b.transact(packet.build_frame(packet.CMD_CONTROL,
-                                                        packet.tlv(0x02, bytes([dens]))),
-                                     wait=0.4, retries=1)
-                    print(f"浓度：{restore} → {dens}（打完恢复）")
+                    restore = infos[-1].value(0x02) if infos else _dev.DEFAULT_DENSITY
+                    if restore == dens:
+                        print(f"浓度：已是 {dens}，跳过设置")
+                        restore = None
+                    else:
+                        await b.transact(packet.build_frame(packet.CMD_CONTROL,
+                                                            packet.tlv(0x02, bytes([dens]))),
+                                         wait=0.4, retries=1)
+                        print(f"浓度：{restore} → {dens}（打完恢复）")
 
                 text_arg = getattr(args, "text", None)
                 is_text = bool(text_arg) and not _image_path(args)
@@ -635,8 +639,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-paginate", action="store_true", help="不分页，整张一次发")
         p.add_argument("--paginate-rows", type=int, default=None,
                        help="分页阈值（默认用 paper.MAX_ROWS_PER_JOB）")
-        p.add_argument("--density", type=int, default=0,
-                       help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
+        p.add_argument("--density", type=int, default=10,
+                       help="打印浓度 1..10（默认 10，最深；传 0 = 不动设备当前值）")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
         p.add_argument("--inter-frame", type=float, default=0.03,
                        help="帧间固定间隔（秒）；0.2~0.4 可让出纸连续又不丢数据")

@@ -146,7 +146,7 @@ def encode_calibration(req: dict) -> dict:
         job = packet.build_bmp_job(bmp)
         used, n = "bmp", len(bmp)
     frames = [base64.b64encode(f).decode() for f in job.frames]
-    if req.get("feed", True):
+    if req.get("feed", False):      # 默认不多走纸（只有显式 feed 才追加班行）
         frames += [base64.b64encode(f).decode() for f in packet.feed_job(3).frames]
     return {
         "frames": frames,
@@ -266,7 +266,7 @@ def encode(req: dict) -> dict:
                 font_size=tier,
             )
             frames = [base64.b64encode(f).decode() for f in job.frames]
-            feed_lines = int(req.get("feedLines") or (3 if req.get("feed", True) else 0))
+            feed_lines = int(req.get("feedLines") or (3 if req.get("feed", False) else 0))
             if feed_lines > 0:
                 frames += [base64.b64encode(f).decode() for f in packet.feed_job(feed_lines).frames]
             return {
@@ -297,7 +297,7 @@ def encode(req: dict) -> dict:
     used = "bmp"
 
     frames = [base64.b64encode(f).decode() for f in job.frames]
-    feed_lines = int(req.get("feedLines") or (3 if req.get("feed", True) else 1))
+    feed_lines = int(req.get("feedLines") or (3 if req.get("feed", False) else 0))
     if feed_lines > 0:
         frames += [base64.b64encode(f).decode() for f in packet.feed_job(feed_lines).frames]
 

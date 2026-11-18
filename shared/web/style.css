@@ -168,6 +168,11 @@ h2 { font-size: 14px; margin: 0 0 8px; color: var(--dim); font-weight: 600; }
   align-items: flex-start;           /* 关键：否则 flex 会把图片纵向拉伸 */
   max-height: 62vh; overflow: auto;
 }
+/* 还没预览时 img 没有 src —— 别显示浏览器的"破图"图标 */
+.preview-wrap img:not([src]), .preview-wrap img[src=""], .preview-wrap img[src="about:blank"] {
+  display: none;
+}
+
 .preview-wrap img {
   display: block; width: auto; height: auto; max-width: 100%;
   image-rendering: pixelated;

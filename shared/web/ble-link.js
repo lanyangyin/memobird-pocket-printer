@@ -153,6 +153,32 @@
      * 发一个完整任务
      * @param {{frames:Uint8Array[], meta:object}} job
      */
+    /**
+     * 等固件把这一批数据消化完：ack 帧 cmd=0x04 里
+     * tag 0x0B = 总帧数，tag 0x0C = 已收到的序号（1 基）。
+     * 只有等它相等，再发收尾帧（0x01）才会真正触发打印。
+     */
+    async function waitJobAck(fromIndex, timeoutMs) {
+      const t0 = Date.now();
+      const limit = timeoutMs == null ? 6000 : timeoutMs;
+      while (Date.now() - t0 < limit) {
+        let total = null;
+        let got = null;
+        for (let i = fromIndex; i < notifications.length; i++) {
+          let p = null;
+          try { p = BLE.parseFrame(notifications[i]); } catch (e) { continue; }
+          if (!p || p.cmd !== 0x04) continue;
+          for (const t of p.tlvs || []) {
+            if (t.tag === 0x0b && t.len >= 1) total = t.value[0];
+            if (t.tag === 0x0c && t.len >= 1) got = t.value[0];
+          }
+        }
+        if (total != null && got != null && got >= total) return { total, got };
+        await sleep(60);
+      }
+      return null;
+    }
+
     async function sendJob(job, label, cfg) {
       cfg = cfg || {};
       const chunk = cfg.chunk || 20;
@@ -167,10 +193,15 @@
       const frames = job.frames;
       emit(`共 ${frames.length} 帧 / ${job.meta ? job.meta.bytes : '?'}B（${job.meta ? job.meta.format : ''}）`);
       const t0 = performance.now();
+      const mark = notifications.length;
       for (let i = 0; i < frames.length; i++) {
         await writeAll(frames[i], `帧 ${i + 1}/${frames.length}`, chunk, cfg.onProgress);
         await sleep(cfg.interFrame == null ? 30 : cfg.interFrame);
       }
+      // 关键：等固件确认收完，否则紧接着发的收尾帧会被丢掉（打印不出来）
+      const ack = await waitJobAck(mark, cfg.ackTimeout == null ? 8000 : cfg.ackTimeout);
+      if (ack) emit(`固件已收完 ${ack.got}/${ack.total} 帧`, 'ok');
+      else emit('没等到固件收完确认 —— 收尾帧可能被忽略', 'warn');
       emit(`${label || '打印'} 已全部发送（${(performance.now() - t0).toFixed(0)}ms）`, 'ok');
     }
 
@@ -304,6 +335,7 @@
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
       sendHex, listGatt, reconnect, ensureConnected,
+      waitJobAck,
       get connected() { return state.connected; },
     };
   }

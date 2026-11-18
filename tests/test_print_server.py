@@ -124,60 +124,53 @@ check("中文强制走位图", meta_cn["format"] == "bmp", meta_cn["format"])
 frames_en, meta_en = ps.build_frames({"text": "Hello"})
 check("纯 ASCII 走 GBK 快路径", meta_en["format"] == "gbk", meta_en["format"])
 
-# ---- 缺纸自动重打（假后端 + 假 paper_state，模拟"先缺纸、后放纸"）----
+# ---- 缺纸自动重打（假后端：模拟"固件推送说缺纸" → 挂起 → 放纸后重打）----
+class _FakeWorker2(ps.FakeWorker):
+    """继承假后端，加一个可控的 last_push_paper（模拟 0x0A 推送里的缺纸位）"""
+    last_push_paper = None
+
 svc2 = ps.PrintService("fake", "", verbose=False)
+svc2.worker = _FakeWorker2(verbose=False)
 svc2._settings = {"autoReprint": True, "paperPollSec": 1, "maxReprints": 3}
-svc2.paper_state = lambda: True          # 当前缺纸
+svc2.worker.last_push_paper = True          # 打印过程中固件说缺纸
+
 before = svc2.count
 out = svc2.print_request({"text": "wait for paper"})
 check("缺纸时打印仍返回 ok", out.get("ok") is True, str(out.get("ok")))
-check("缺纸会标记 pendingReprint", svc2.pending_reprint is not None, "pending")
-check("返回里说明会重打", "autoReprint" in out, str(list(out)))
+check("推送缺纸 → 立刻挂起", svc2.pending_reprint is not None, "pending")
+check("返回里说明会重打", "autoReprint" in out, str([k for k in out]))
 
-svc2.monitor_paper_loop()
+svc2.paper_state = lambda: True
+svc2.monitor_paper_loop()                    # 还缺纸 → 不重打
 check("还缺纸时不重打", svc2.count == before + 1, str(svc2.count - before))
 
-svc2.paper_state = lambda: False         # 放纸了
+svc2.paper_state = lambda: False             # 放纸了
 svc2.monitor_paper_loop()
 check("放纸后自动重打", svc2.count == before + 2, str(svc2.count - before))
 check("重打后清空 pending", svc2.pending_reprint is None, "cleared")
 
+# 关掉开关：即使推送缺纸也不挂起
 svc3 = ps.PrintService("fake", "", verbose=False)
+svc3.worker = _FakeWorker2(verbose=False)
 svc3._settings = {"autoReprint": False, "paperPollSec": 1, "maxReprints": 3}
-svc3.paper_state = lambda: True
+svc3.worker.last_push_paper = True
 svc3.print_request({"text": "no auto"})
 check("开关关掉后不挂起", svc3.pending_reprint is None, "none")
 
-svc2.paper_state = lambda: True
-svc2.print_request({"text": "again"})
-svc2.pending_reprint["attempts"] = 99
+# 没缺纸时不该挂起
+svc4 = ps.PrintService("fake", "", verbose=False)
+svc4.worker = _FakeWorker2(verbose=False)
+svc4._settings = {"autoReprint": True, "paperPollSec": 1, "maxReprints": 3}
+svc4.worker.last_push_paper = False
+svc4.print_request({"text": "paper fine"})
+check("有纸时不挂起", svc4.pending_reprint is None, "none")
+
+# 超过 maxReprints 就放弃
+svc2.pending_reprint = {"req": {"text": "x"}, "meta": {}, "at": "", "attempts": 99}
 svc2.paper_state = lambda: False
 cnt = svc2.count
 svc2.monitor_paper_loop()
 check("超过 maxReprints 不再重打", svc2.count == cnt, str(svc2.count - cnt))
-
-# ---- 卡住恢复后补打：状态长时间读不到 → 恢复能读时补打一次 ----
-svc4 = ps.PrintService("fake", "", verbose=False)
-svc4._settings = {"autoReprint": True, "paperPollSec": 1, "maxReprints": 3,
-                  "reprintOnUnconfirmed": True}   # 激进模式才补打
-svc4.paper_state = lambda: None          # 读不到（打印机卡住）
-svc4.print_request({"text": "suspect job"})
-check("读不到状态时先记为 last_job", svc4.last_job is not None, "last_job")
-check("读不到状态时不立刻挂起", svc4.pending_reprint is None, "no pending")
-
-svc4.last_job["suspectSince"] = time.time() - 60      # 已经卡了 60 秒
-svc4.paper_state = lambda: False                      # 恢复了，且现在有纸
-svc4.monitor_paper_loop()
-# monitor_paper_loop 只管 pending；复查在监控线程里，这里直接模拟那一步
-if svc4.pending_reprint is None and svc4.last_job:
-    paper = svc4.paper_state()
-    suspect_for = time.time() - svc4.last_job.get("suspectSince", time.time())
-    if paper is False and suspect_for >= svc4.SUSPECT_SEC:
-        svc4.mark_pending_reprint(svc4.last_job["req"], svc4.last_job["meta"])
-        svc4.pending_reprint["reason"] = "device-unresponsive"
-        svc4.last_job = None
-check("恢复后挂起补打", svc4.pending_reprint is not None, "pending")
-check("补打原因标记为卡住", (svc4.pending_reprint or {}).get("reason"), "device-unresponsive")
 
 # 收尾：默认发状态帧 0x01（触发打印且不断连），不额外走纸
 frames, meta = ps.build_frames({"text": "Hello"})

@@ -64,6 +64,7 @@ class BlePrinter:
         self._client = None
         self._rx = bytearray()          # 通知分片的接收缓冲
         self._notifies: list[bytes] = []   # 已重组成完整帧
+        self.initial_paper: bool | None = None   # 连接时那帧里的缺纸标志
         self._chunks: list[bytes] = []     # 原始通知分片（排查用）
 
     # ------------------------------------------------------------------ #
@@ -90,7 +91,14 @@ class BlePrinter:
         self._chunks.clear()
         try:
             await self._client.start_notify(self.notify_uuid, self._on_notify)
-            await asyncio.sleep(0.3)          # 让订阅稳定，随后清掉残留分片
+            # 固件刚连上要 1~2 秒才肯应答；而且**缺纸时它只推一帧状态、不再回应查询**，
+            # 所以先把这帧里的纸状态记下来，再清缓冲。
+            await asyncio.sleep(1.2)
+            try:
+                from . import device as _dev
+                self.initial_paper = _dev.paper_out_from_notifies(self._notifies)
+            except Exception:                                  # noqa: BLE001
+                self.initial_paper = None
             self._notifies.clear()
             self._rx.clear()
             self._chunks.clear()
@@ -198,24 +206,18 @@ class BlePrinter:
             pass
         await self.__aenter__()
 
-    async def paper_state(self, *, wait: float = 1.5) -> bool | None:
-        """读缺纸状态：先发 0x01 查询；没回包就退回用设备主动推的 0x0A。"""
+    async def paper_state(self, *, wait: float = 2.0) -> bool | None:
+        """读缺纸状态（刚连上固件可能还没准备好，内部会重试几次）。"""
         from . import device as _dev
 
-        try:
-            frames = await self.transact(_dev.status_frame(), wait=wait, retries=1)
-        except Exception:                                      # noqa: BLE001
-            frames = []
-        infos = [i for i in ( _dev.parse_status(f) for f in frames) if i]
+        infos = await _dev.read_info(self, detail=False, wait=wait, attempts=2)
         if infos:
             return _dev.paper_out(infos[-1])
-        # 退路：等设备主动推一帧状态（刚连上时要等 0.5~2 秒才来）
-        for _ in range(int(max(1.0, wait * 2) * 10)):
-            got = _dev.paper_out_from_notifies(self._notifies)
-            if got is not None:
-                return got
-            await asyncio.sleep(0.1)
-        return None
+        # 退路 1：连接时固件主动推的那一帧（缺纸时它只推这一帧）
+        if getattr(self, "initial_paper", None) is not None:
+            return self.initial_paper
+        # 退路 2：这期间收到的推送
+        return _dev.paper_out_from_notifies(self._notifies)
 
     async def wait_last_ack(self, total: int, timeout: float = 3.0) -> bool:
         """等固件 ack 到第 total 帧（cmd 0x04 ack 里 `0x0C` 是包序）。

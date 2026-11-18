@@ -246,9 +246,18 @@ def setting_frame(tag: int, value: int) -> bytes:
 # --------------------------------------------------------------------------- #
 # 异步封装（需要 BlePrinter / 任意有 transact 的对象）
 # --------------------------------------------------------------------------- #
-async def read_info(link, *, detail: bool = True, wait: float = 1.5) -> list[DeviceInfo]:
-    frames = await link.transact(status_frame(detail), wait=wait)
-    return [i for i in (parse_status(f) for f in frames) if i and i.cmd in (CMD_STATUS_DETAIL, CMD_STATUS)]
+async def read_info(link, *, detail: bool = True, wait: float = 2.0,
+                   attempts: int = 3) -> list[DeviceInfo]:
+    """读设备状态。刚连上时固件可能还没准备好应答，所以默认重试 3 次。"""
+    for i in range(max(1, attempts)):
+        frames = await link.transact(status_frame(detail), wait=wait, retries=0)
+        infos = [x for x in (parse_status(f) for f in frames)
+                 if x and x.cmd in (CMD_STATUS_DETAIL, CMD_STATUS)]
+        if infos:
+            return infos
+        if i + 1 < attempts:
+            await asyncio.sleep(0.6)
+    return []
 
 
 def paper_out_from_notifies(frames, *, max_age: int | None = None) -> bool | None:

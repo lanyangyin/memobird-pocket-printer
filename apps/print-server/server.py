@@ -211,6 +211,9 @@ class BleWorker:
             # 顺带看固件在这期间推来的状态帧（0x0A）里有没有"缺纸"
             await asyncio.sleep(0.3)
             self.last_push_paper = _dev.paper_out_from_notifies(dev._notifies)
+            if self.last_push_paper is None:
+                # 缺纸时固件只在连接瞬间推一帧，之后不回应查询
+                self.last_push_paper = getattr(dev, "initial_paper", None)
             self.last_push_paper_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
     def send(self, frames: list[bytes], preheat: bool, timeout: float = 180,

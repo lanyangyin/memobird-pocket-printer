@@ -45,3 +45,9 @@ warm.csv
 # ---- 临时生成物 ----
 cal*_preview.png
 *_preview.png
+*_preview.png
+step*.png
+test400.png
+tiny24.png
+top0.png
+rows[0-9]*.png

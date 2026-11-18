@@ -491,6 +491,25 @@ def _ble_of(args):
     return addr
 
 
+def cmd_disconnect(args) -> int:
+    """连上再立刻断开 —— 用来清掉 Windows 上残留的连接（其它设备就能连了）"""
+    addr = getattr(args, "ble", None)
+    if not addr:
+        print("需要 --ble <地址>", file=sys.stderr)
+        return 1
+    from .ble import BlePrinter
+
+    async def run():
+        b = BlePrinter(addr, echo=False)
+        await b.__aenter__()
+        print("已连接，准备断开…")
+        await asyncio.sleep(0.5)
+        await b.disconnect()
+        print("已断开")
+    asyncio.run(run())
+    return 0
+
+
 def cmd_raw(args) -> int:
     """发任意十六进制帧（原样写到 ff02），打印回包"""
     addr = _ble_of(args)
@@ -662,6 +681,10 @@ def build_parser() -> argparse.ArgumentParser:
     # status：只要目标
     p = _common(sub.add_parser("status"))
     p.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("disconnect", help="连上后立刻断开（清掉残留连接）")
+    s.add_argument("--ble", required=True)
+    s.set_defaults(func=cmd_disconnect)
 
     s = sub.add_parser("raw", help="发任意十六进制帧")
     s.add_argument("hex", help="例如 aa01000154")

@@ -6,7 +6,7 @@
 'use strict';
 
 const { $, createLogger, initTabs, setChip, setProgress, b64ToBytes, copyText, keepAwake } = window.MBUI;
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '__VER__';   // serve.py 响应时注入
 
 const log = createLogger($('#log'));
 const link = window.MBLink.createLink({ log });
@@ -143,6 +143,14 @@ $('#btn-connect').addEventListener('click', async () => {
   } finally {
     state.busy = false;
   }
+});
+
+$('#btn-disconnect').addEventListener('click', () => {
+  try {
+    link.disconnect();
+    setChip($('#conn'), '未连接', 'warn');
+    log('已断开（打印机已释放，官方 App / 其它设备可以连了）', 'ok');
+  } catch (e) { log('断开失败：' + (e.message || e), 'err'); }
 });
 
 $('#font-size').addEventListener('input', (e) => { $('#font-size-val').textContent = e.target.value; });

@@ -163,6 +163,10 @@ class BlePrinter:
         await asyncio.sleep(seconds)
         return list(self._notifies)
 
+    async def disconnect(self) -> None:
+        """显式断开（主动释放设备，让别的 App / 机器能连）"""
+        await self.__aexit__()
+
     @property
     def is_connected(self) -> bool:
         try:

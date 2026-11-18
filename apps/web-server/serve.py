@@ -407,8 +407,8 @@ class Handler(BaseHTTPRequestHandler):
         ext = os.path.splitext(full)[1].lower()
         with open(full, "rb") as f:
             data = f.read()
-        # 页面里的 __VER__ 换成实际版本号（标题栏显示用）
-        if ext in (".html", ".htm"):
+        # 页面/脚本里的 __VER__ 换成实际版本号（标题栏、页脚显示用）
+        if ext in (".html", ".htm", ".js"):
             data = data.replace(b"__VER__", VERSION.encode())
         self._send(200, data, MIME.get(ext, "application/octet-stream"))
 

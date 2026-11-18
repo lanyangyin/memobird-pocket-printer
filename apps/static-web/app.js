@@ -87,7 +87,8 @@ async function encode(req) {
       bold: req.bold, underline: req.underline, fontSize: 0,
     });
     if (job) {
-      if (req.feed) job.frames = job.frames.concat(E.feedJob(3).frames);
+      const lines = Math.max(0, Math.min(8, parseInt(req.feedLines, 10) || 0));
+      if (lines > 0) job.frames = job.frames.concat(E.feedJob(lines).frames);
       return job;
     }
     log('文本含 GBK 无法表示的字符 → 自动转位图', 'warn');
@@ -258,7 +259,7 @@ $('#btn-calib').addEventListener('click', async () => {
     const g = R.calibrationGray();
     const d = E.ditherToRaw(g.gray, g.w, g.h, 'threshold', null, 0);
     const job = E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true, topDown: !$('#vflip').checked });
-    job.frames = job.frames.concat(E.feedJob(3).frames);
+    // 校准页默认不多走纸
     $('#preview').src = R.rawToDataURL(d.w, d.h, d.raw, 2);
     $('#meta').textContent = `${job.meta.format} · ${job.meta.bytes}B · ${job.meta.chunks}帧 · ${job.meta.width}×${job.meta.height}`;
     await link.sendJob(job, '校准图', {
@@ -281,7 +282,9 @@ $('#btn-sizeprobe').addEventListener('click', async () => {
     const g = R.textToGray('位图 40px 对照', { fontSize: 40 });
     const d = E.ditherToRaw(g.gray, g.w, g.h, 'threshold', null, 0);
     frames = frames.concat(E.jobFromRaw(d.raw, d.w, d.h, 'bmp', { official: true }).frames);
-    frames = frames.concat(E.feedJob(3).frames);
+    // 字号探针默认不多走纸（需要留白时用「打后走纸」输入框）
+    const probeLines = Math.max(0, Math.min(8, parseInt($('#feed-lines').value, 10) || 0));
+    if (probeLines > 0) frames = frames.concat(E.feedJob(probeLines).frames);
     const bytes = frames.reduce((a, f) => a + f.length, 0);
     await link.sendJob({ frames, meta: { format: 'probe', bytes, chunks: frames.length, preheat: 2048 } }, '字号档位测试', {
       chunk: parseInt($('#chunk').value, 10),

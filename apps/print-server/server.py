@@ -88,7 +88,7 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
     darken = max(0, min(3, int(req.get("darken") or 0)))
     tier = size_tier(req.get("fontSize"))
     mode = req.get("mode") or "threshold"
-    feed = bool(req.get("feed", True))
+    feed = bool(req.get("feed", False))      # 默认不再额外走纸
 
     if kind == "text":
         text = req.get("text") or ""
@@ -99,8 +99,11 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
             try:
                 job = packet.job_for_text(text, encoding="gbk")
                 frames = list(job.frames)
-                if feed:
-                    frames += packet.feed_job(3).frames
+                _want_feed = (req.get("terminator") == "feed") or feed
+                if _want_feed:
+                    frames += packet.feed_job(int(req.get("feedLines") or 3)).frames
+                else:
+                    frames.append(packet.commit_frame())
                 return frames, {"format": "gbk", "chunks": job.chunks,
                                 "bytes": job.total_bytes, "preheat": packet.PREHEAT,
                                 "width": 384, "height": 0}
@@ -135,13 +138,12 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
     bmp = raw_to_bmp(w, h, raw, official=True, top_down=not req.get("vflip"))
     job = packet.build_bmp_job(bmp, chunk=int(req.get("bmpChunk") or 1024))
     frames = list(job.frames)
-    # 收尾：commit（默认，不驱动电机）或 feed（再走 N 行）
-    if (req.get("terminator") or "commit") == "feed":
+    # 收尾：**默认只发提交帧，不额外走纸**；要留白才显式 feed
+    _want_feed = (req.get("terminator") == "feed") or feed
+    if _want_feed:
         frames += packet.feed_job(int(req.get("feedLines") or 3)).frames
     else:
         frames.append(packet.commit_frame())
-    if feed:
-        frames += packet.feed_job(3).frames
     return frames, {"format": "bmp", "chunks": job.chunks, "bytes": len(bmp),
                     "preheat": packet.PREHEAT, "width": w, "height": h}
 

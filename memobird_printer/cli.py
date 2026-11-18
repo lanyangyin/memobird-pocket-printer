@@ -330,6 +330,11 @@ def cmd_feed(args) -> int:
         mm = None
 
     if mm is not None:
+        from .paper import OVERHEAD_MM
+
+        if mm < OVERHEAD_MM:
+            print(f"⚠ 最小出纸约 {OVERHEAD_MM:.0f}mm（固件固定开销），已按最小值处理",
+                  file=sys.stderr)
         frames, meta = blank_frames(mm=mm, dpi=args.dpi, tick=args.tick,
                                     total=not getattr(args, "content", False))
     else:

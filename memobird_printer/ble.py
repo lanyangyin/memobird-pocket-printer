@@ -48,14 +48,16 @@ class BlePrinter:
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
                  settle: float = 0.02, timeout: float = 15.0, echo: bool = True,
-                 chunk: int = 180):
+                 chunk: int = 180, batch: int = 1, window: int = 1):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
         self.settle = settle
         self.timeout = timeout
         self.echo = echo
-        self.chunk = max(20, int(chunk))     # 每次 GATT 写入的字节数
+        self.chunk = max(20, int(chunk))
+        self.batch = max(1, int(batch))     # 并发写入数（>1 提速，可能丢包）
+        self.window = max(1, int(window))   # 流控窗口（1=逐帧等 ack，最稳）     # 每次 GATT 写入的字节数
         self._client = None
         self._rx = bytearray()          # 通知分片的接收缓冲
         self._notifies: list[bytes] = []   # 已重组成完整帧
@@ -122,6 +124,45 @@ class BlePrinter:
             if self.settle:
                 await asyncio.sleep(self.settle)
 
+    # ------------------------------------------------------------------ #
+    # 底层：GATT 读写 / 任意帧 / 通知监听
+    # ------------------------------------------------------------------ #
+    async def list_gatt(self) -> list[str]:
+        """列出所有服务与特征值（含属性）"""
+        out = []
+        for svc in self._client.services:
+            out.append(f"[service] {svc.uuid}  {svc.description}")
+            for ch in svc.characteristics:
+                props = ",".join(ch.properties)
+                out.append(f"    [char] {ch.uuid}  ({props})")
+        return out
+
+    async def read_char(self, uuid: str) -> bytes:
+        """读任意特征值"""
+        return bytes(await self._client.read_gatt_char(uuid))
+
+    async def write_hex(self, uuid: str, data: bytes, response: bool | None = None) -> None:
+        """往任意特征值写原始字节（response=None 时按属性自动选）"""
+        if response is None:
+            try:
+                await self._client.write_gatt_char(uuid, data, response=False)
+            except Exception:
+                await self._client.write_gatt_char(uuid, data, response=True)
+        else:
+            await self._client.write_gatt_char(uuid, data, response=response)
+
+    async def send_hex(self, hex_str: str) -> list[bytes]:
+        """发一串十六进制帧（空格可有可无），返回回包"""
+        raw = bytes.fromhex(hex_str.replace(" ", "").replace("\n", ""))
+        return await self.transact(raw, wait=1.0, retries=1)
+
+    async def watch(self, seconds: float = 10.0) -> list[bytes]:
+        """只订阅、不发送，监听 seconds 秒内的所有通知帧"""
+        self._notifies.clear()
+        self._rx.clear()
+        await asyncio.sleep(seconds)
+        return list(self._notifies)
+
     async def wait_last_ack(self, total: int, timeout: float = 3.0) -> bool:
         """等固件 ack 到第 total 帧（cmd 0x04 ack 里 `0x0C` 是包序）。
 
@@ -173,8 +214,10 @@ class BlePrinter:
         for i, f in enumerate(frames, 1):
             await self.write(f)
             if flow_control:
-                # 逐帧等 ack：固件缓冲只装得下一帧，不等就会丢数据
-                await self.wait_ack_at(i, timeout=2.5)
+                # 窗口流控：只等"窗口之外"的那一帧。window=1 即逐帧等 ack（最稳）。
+                behind = i - self.window + 1
+                if behind >= 1:
+                    await self.wait_ack_at(behind, timeout=2.5)
             elif inter_frame:
                 await asyncio.sleep(inter_frame)
         if wait_ack and not flow_control:

@@ -221,10 +221,12 @@ def cmd_print(args) -> int:
     if args.ble:
         async def run():
             from .ble import BlePrinter
-            from .paper import FAST_PATH_FRAMES, paginate
+            from .paper import FAST_PATH_FRAMES, MAX_ROWS_PER_JOB, paginate
 
             async with BlePrinter(args.ble, chunk=getattr(args, "chunk", 180),
-                                  settle=getattr(args, "settle", 0.002)) as b:
+                                  settle=getattr(args, "settle", 0.002),
+                                  batch=getattr(args, "batch", 1),
+                                  window=getattr(args, "window", 1)) as b:
                 preheat = not getattr(args, "no_preheat", False)
 
                 # 降浓度 = 每行加热更久 = 打印变慢 → 慢速 BLE 下长图才打得完整
@@ -252,14 +254,19 @@ def cmd_print(args) -> int:
                         # 中文必须走位图：这台固件的 GBK 文本帧没有中文字形（打出来是黑块）
                         print("文本含中文 → 改走位图（GBK 文本帧无中文字形）", file=sys.stderr)
 
-                    pages = paginate(args._gray)
+                    threshold = (getattr(args, "paginate_rows", None)
+                                 or MAX_ROWS_PER_JOB)
+                    pages = ([args._gray] if getattr(args, "no_paginate", False)
+                             else paginate(args._gray, threshold))
                     if len(pages) > 1:
                         print(f"图高 {args._gray.size[1]} 行超过单任务阈值 "
                               f"→ 分 {len(pages)} 页（页间有固件 18mm 空隙）", file=sys.stderr)
 
                     for n, page in enumerate(pages, 1):
                         pw, ph, praw = dither_to_raw(page, args.mode)
-                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True))
+                        pjob = packet.build_bmp_job(
+                            raw_to_bmp(pw, ph, praw, official=True),
+                            chunk=getattr(args, "bmp_chunk", 1024))
 
                         # 自动选节奏：短内容不等 ack（连续、不顿）；长内容必须流控（否则丢数据）
                         use_flow = len(pjob.frames) > FAST_PATH_FRAMES and not getattr(args, "no_flow", False)
@@ -453,6 +460,125 @@ def cmd_cloud_text(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# 底层操作（把能实现的能力全部暴露出来）
+# --------------------------------------------------------------------------- #
+def _ble_of(args):
+    addr = getattr(args, "ble", None)
+    if not addr:
+        print("需要 --ble <地址>", file=sys.stderr)
+        return None
+    return addr
+
+
+def cmd_raw(args) -> int:
+    """发任意十六进制帧（原样写到 ff02），打印回包"""
+    addr = _ble_of(args)
+    if not addr:
+        return 1
+    from .ble import BlePrinter
+
+    async def run():
+        async with BlePrinter(addr, chunk=args.chunk, settle=args.settle, echo=False) as b:
+            frames = await b.send_hex(args.hex)
+            for f in frames:
+                print(f"  ← {f.hex(' ')}")
+            if not frames:
+                print("  （无回包）")
+    asyncio.run(run())
+    return 0
+
+
+def cmd_cmd(args) -> int:
+    """构造并发送一条命令：cmd + 若干 TLV（tag/len/value）"""
+    addr = _ble_of(args)
+    if not addr:
+        return 1
+    from .ble import BlePrinter
+
+    payload = b""
+    for spec in args.tlv or []:
+        # 格式 tag:值（单字节）或 tag:hex:0102
+        parts = spec.split(":")
+        tag = int(parts[0], 0)
+        if len(parts) == 3 and parts[1] == "hex":
+            val = bytes.fromhex(parts[2])
+        else:
+            val = bytes([int(parts[1], 0)]) if len(parts) > 1 else b"\x01"
+        payload += packet.tlv(tag, val)
+
+    frame = packet.build_frame(int(args.cmd, 0), payload)
+    print(f"发送: {frame.hex(' ')}")
+
+    async def run():
+        async with BlePrinter(addr, chunk=args.chunk, settle=args.settle, echo=False) as b:
+            frames = await b.transact(frame, wait=args.wait, retries=1)
+            for f in frames:
+                print(f"  ← {f.hex(' ')}")
+            if not frames:
+                print("  （无回包）")
+    asyncio.run(run())
+    return 0
+
+
+def cmd_notify(args) -> int:
+    """只订阅通知，监听 N 秒（看看设备主动推什么）"""
+    addr = _ble_of(args)
+    if not addr:
+        return 1
+    from .ble import BlePrinter
+
+    async def run():
+        async with BlePrinter(addr, chunk=args.chunk, settle=args.settle, echo=False) as b:
+            print(f"监听 {args.seconds} 秒…")
+            frames = await b.watch(args.seconds)
+            for f in frames:
+                print(f"  ← {f.hex(' ')}")
+            print(f"共 {len(frames)} 帧")
+    asyncio.run(run())
+    return 0
+
+
+def cmd_gatt_read(args) -> int:
+    """读任意 GATT 特征值"""
+    addr = _ble_of(args)
+    if not addr:
+        return 1
+    from .ble import BlePrinter
+
+    async def run():
+        async with BlePrinter(addr, echo=False) as b:
+            if args.list:
+                for line in await b.list_gatt():
+                    print(line)
+                return
+            data = await b.read_char(args.uuid)
+            print(f"{args.uuid}: {data.hex(' ')}")
+            try:
+                print(f"  ascii: {data.decode('utf-8')}")
+            except Exception:
+                pass
+    asyncio.run(run())
+    return 0
+
+
+def cmd_gatt_write(args) -> int:
+    """写任意 GATT 特征值（十六进制）"""
+    addr = _ble_of(args)
+    if not addr:
+        return 1
+    from .ble import BlePrinter
+
+    data = bytes.fromhex(args.hex.replace(" ", ""))
+
+    async def run():
+        async with BlePrinter(addr, echo=False) as b:
+            await b.write_hex(args.uuid, data)
+            print(f"已写入 {args.uuid}: {data.hex(' ')}")
+    asyncio.run(run())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     from . import __version__
 
@@ -484,6 +610,15 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-preheat", action="store_true", help="不发热身包（排查用）")
         p.add_argument("--chunk", type=int, default=180, help="GATT 每次写入字节数")
         p.add_argument("--settle", type=float, default=0.002, help="每片之后停顿（秒）")
+        # ---- 底层参数（默认值适合绝大多数场景，需要时再调）----
+        p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
+        p.add_argument("--window", type=int, default=1,
+                       help="流控窗口（1=逐帧等 ack，最稳；>1 可能丢数据）")
+        p.add_argument("--bmp-chunk", type=int, default=1024,
+                       help="位图每帧载荷字节（固件只收 <=1024）")
+        p.add_argument("--no-paginate", action="store_true", help="不分页，整张一次发")
+        p.add_argument("--paginate-rows", type=int, default=None,
+                       help="分页阈值（默认用 paper.MAX_ROWS_PER_JOB）")
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
@@ -507,6 +642,42 @@ def build_parser() -> argparse.ArgumentParser:
     # status：只要目标
     p = _common(sub.add_parser("status"))
     p.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("raw", help="发任意十六进制帧")
+    s.add_argument("hex", help="例如 aa01000154")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--chunk", type=int, default=180)
+    s.add_argument("--settle", type=float, default=0.002)
+    s.set_defaults(func=cmd_raw)
+
+    s = sub.add_parser("cmd", help="构造并发送命令（cmd + TLV）")
+    s.add_argument("cmd", help="命令码，如 0x08")
+    s.add_argument("--tlv", action="append", metavar="TAG:VAL",
+                   help="TLV，可多次；TAG:VAL 或 TAG:hex:0102")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--wait", type=float, default=1.0)
+    s.add_argument("--chunk", type=int, default=180)
+    s.add_argument("--settle", type=float, default=0.002)
+    s.set_defaults(func=cmd_cmd)
+
+    s = sub.add_parser("notify", help="只监听设备通知 N 秒")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--seconds", type=float, default=10)
+    s.add_argument("--chunk", type=int, default=180)
+    s.add_argument("--settle", type=float, default=0.002)
+    s.set_defaults(func=cmd_notify)
+
+    s = sub.add_parser("gatt-read", help="读任意 GATT 特征值（--list 列出全部）")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--uuid", default="00002a29-0000-1000-8000-00805f9b34fb")
+    s.add_argument("--list", action="store_true", help="列出所有服务/特征值")
+    s.set_defaults(func=cmd_gatt_read)
+
+    s = sub.add_parser("gatt-write", help="写任意 GATT 特征值（十六进制）")
+    s.add_argument("--ble", required=True)
+    s.add_argument("--uuid", required=True)
+    s.add_argument("--hex", required=True)
+    s.set_defaults(func=cmd_gatt_write)
 
     s = sub.add_parser("scan")
     s.add_argument("--timeout", type=float, default=8)

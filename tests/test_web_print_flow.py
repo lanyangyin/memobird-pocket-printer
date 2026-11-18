@@ -91,6 +91,8 @@ MOCK = r"""
       return job.frames.length;
     },
     async query(frame) { cap.queries.push(hex(frame)); return []; },
+    async sendHex(hexStr) { cap.raw = (cap.raw || []).concat(hexStr); return []; },
+    async listGatt() { return ['[service] test']; },
     async readDeviceInfo() {
       return [{ cmd: 2, serial: '636404963750000000', fields: [
         { tag: 0x02, int: 10 }, { tag: 0x03, int: 1 },
@@ -239,6 +241,19 @@ def main() -> int:
         check("浓度：先设 6 再恢复 10", settings, [6, 10])
         queries = json.loads(cdp.eval("JSON.stringify(window.__CAP__.queries)"))
         check("终结帧是提交帧 cmd 0x08", queries, ["aa0100084d"])
+
+        # 5b. 底层：任意帧发送 / 命令构造 / GATT 列表
+        cdp.eval("window.__CAP__.queries.length = 0; true", await_promise=False)
+        raw = cdp.eval("""(async () => {
+          await link.sendHex('aa 01 00 01 54');
+          const f = window.MBBle.buildFrame(0x08, new Uint8Array(0));
+          const g = await link.listGatt();
+          return { sent: (window.__CAP__.raw || []).slice(-1)[0], commit: window.MBBle.bytesToHex(f), gatt: Array.isArray(g) };
+        })()""")
+        check("sendHex 把帧交给传输层", raw["sent"], "aa 01 00 01 54")
+        check("buildFrame(0x08) = aa 01 00 08 4d", raw["commit"], "aa 01 00 08 4d")
+        check("listGatt 返回数组", raw["gatt"], True)
+        check("底层面板存在", cdp.eval("!!document.querySelector('#btn-raw')", await_promise=False), True)
 
         # 6. 分页时逐页发送（3 页 = 3 次 sendJob）
         cdp.eval("window.__CAP__.jobs.length = 0; true", await_promise=False)

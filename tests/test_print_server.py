@@ -114,6 +114,13 @@ def req(method, path, body=None, headers=None):
         return e.code, json.loads(e.read().decode() or "{}")
 
 
+# 底层接口在 fake 后端应明确拒绝（而不是假装成功）
+for path, payload in (("/raw", {"hex": "aa01000154"}), ("/cmd", {"cmd": "0x08"})):
+    code, body = req("POST", path, payload)
+    check(f"POST {path} 在 fake 下 400", code == 400 and body.get("ok") is False, str(code))
+code, body = req("GET", "/gatt")
+check("GET /gatt 在 fake 下 400", code == 400 and body.get("ok") is False, str(code))
+
 code, body = req("GET", "/health")
 check("GET /health 200", code == 200 and body.get("ok") is True, body.get("backend", ""))
 

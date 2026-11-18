@@ -221,6 +221,47 @@ async function toggleLed(on) {
   } catch (e) { log('灯操作失败：' + (e.message || e), 'err'); }
 }
 
+/* --------------------------------------------------------------- 底层 */
+const rawOut = (line) => {
+  const el = $('#raw-out');
+  el.textContent = (el.textContent ? el.textContent + '\n' : '') + line;
+};
+
+$('#btn-raw').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  const hex = $('#raw-hex').value.trim();
+  if (!hex) { log('填一个帧，例如 aa 01 00 01 54', 'warn'); return; }
+  try {
+    const replies = await link.sendHex(hex);
+    rawOut(`TX ${hex}`);
+    replies.forEach((r) => rawOut(`RX ${r}`));
+    if (!replies.length) rawOut('（无回包）');
+  } catch (e) { rawOut('错误: ' + (e.message || e)); }
+});
+
+$('#btn-cmd').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  try {
+    const cmd = parseInt($('#cmd-code').value, 0);
+    const tag = parseInt($('#cmd-tag').value, 0);
+    const val = parseInt($('#cmd-val').value, 0);
+    const frame = window.MBBle.buildFrame(cmd, window.MBBle.tlv8(tag, val));
+    const replies = await link.sendHex(window.MBBle.bytesToHex(frame));
+    rawOut(`TX ${window.MBBle.bytesToHex(frame)}  (cmd=0x${cmd.toString(16)} tag=0x${tag.toString(16)}=${val})`);
+    replies.forEach((r) => rawOut(`RX ${r}`));
+  } catch (e) { rawOut('错误: ' + (e.message || e)); }
+});
+
+$('#btn-notify').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  rawOut('监听 5 秒…');
+  try {
+    const frames = await link.query(new Uint8Array(0), 5000);
+    frames.forEach((f) => rawOut(`RX ${window.MBBle.bytesToHex(f)}`));
+    rawOut(`共 ${frames.length} 帧`);
+  } catch (e) { rawOut('错误: ' + (e.message || e)); }
+});
+
 $('#btn-gatt').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }
   try {

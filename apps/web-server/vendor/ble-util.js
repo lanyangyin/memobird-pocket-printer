@@ -131,6 +131,20 @@
     0x14: { name: 'counter_14', label: '8 字节计数?', confirmed: false },
   };
 
+  /** "aa 01 00 54" → Uint8Array */
+  function hexToBytes(str) {
+    const clean = (str || '').replace(/0x/gi, '').replace(/[^0-9a-fA-F]/g, '');
+    if (clean.length % 2) throw new Error('十六进制长度必须是偶数');
+    const out = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+
+  /** Uint8Array → "aa 01 00" */
+  function bytesToHex(bytes) {
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
+  }
+
   /** cmd 0x01：读状态（详版）。校验和已算好：aa 01 00 01 54 */
   const STATUS_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x01, 0x54]);
   /** cmd 0x08：提交/结束任务（不驱动电机，但能让固件把位图打出来） */
@@ -265,5 +279,6 @@
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
+    hexToBytes, bytesToHex,
   };
 });

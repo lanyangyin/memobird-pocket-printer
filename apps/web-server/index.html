@@ -132,6 +132,19 @@
         <button id="btn-led-on" class="ghost">开灯</button>
         <button id="btn-led-off" class="ghost">关灯</button>
         <button id="btn-device" class="ghost">读设备信息</button>
+      <h3>底层操作</h3>
+      <textarea id="raw-hex" rows="2" placeholder="任意帧，如 aa 01 00 01 54（读状态）"></textarea>
+      <div class="actions">
+        <button id="btn-raw" class="ghost">发送帧</button>
+        <button id="btn-notify" class="ghost">监听通知 5 秒</button>
+      </div>
+      <div class="row">
+        <label>cmd <input id="cmd-code" value="0x08" size="6"></label>
+        <label>tag <input id="cmd-tag" value="0x02" size="6"></label>
+        <label>value <input id="cmd-val" value="6" size="4"></label>
+        <button id="btn-cmd" class="ghost">发命令</button>
+      </div>
+      <pre id="raw-out"></pre>
         <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
       </div>

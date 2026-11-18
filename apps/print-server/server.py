@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 
@@ -133,10 +133,13 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
         # 反色在 prepare 里已经做过灰度处理，这里只兜底处理显式 invert
         pass
     bmp = raw_to_bmp(w, h, raw, official=True, top_down=not req.get("vflip"))
-    job = packet.build_bmp_job(bmp)
+    job = packet.build_bmp_job(bmp, chunk=int(req.get("bmpChunk") or 1024))
     frames = list(job.frames)
-    # 提交帧：让固件把位图真正打出来（不驱动电机 ⇒ 不多走纸）
-    frames.append(packet.commit_frame())
+    # 收尾：commit（默认，不驱动电机）或 feed（再走 N 行）
+    if (req.get("terminator") or "commit") == "feed":
+        frames += packet.feed_job(int(req.get("feedLines") or 3)).frames
+    else:
+        frames.append(packet.commit_frame())
     if feed:
         frames += packet.feed_job(3).frames
     return frames, {"format": "bmp", "chunks": job.chunks, "bytes": len(bmp),
@@ -164,15 +167,20 @@ class BleWorker:
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return fut.result(timeout=timeout)
 
-    async def _send(self, frames: list[bytes], preheat: bool):
+    async def _send(self, frames: list[bytes], preheat: bool, flow: bool = True,
+                    window: int = 1, chunk: int = 180, settle: float = 0.002):
         from memobird_printer.ble import BlePrinter
 
-        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
+        async with BlePrinter(self.target, settle=settle, chunk=chunk,
+                              window=window, echo=False) as dev:
             await dev.send_frames(frames, preheat=preheat, inter_frame=0.02,
-                                  wait_ack=True, flow_control=True)
+                                  wait_ack=True, flow_control=flow)
 
-    def send(self, frames: list[bytes], preheat: bool, timeout: float = 180):
-        return self.call(self._send(frames, preheat), timeout)
+    def send(self, frames: list[bytes], preheat: bool, timeout: float = 180,
+             flow: bool = True, window: int = 1, chunk: int = 180, settle: float = 0.002,
+             bmp_chunk: int = 1024):
+        return self.call(self._send(frames, preheat, flow, window, chunk, settle),
+                         timeout)
 
     async def _read_info(self) -> tuple[list[dict], bool | None]:
         from memobird_printer import device
@@ -191,6 +199,45 @@ class BleWorker:
 
         async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
             return await device.set_setting(dev, tag, value, wait=1.2)
+
+    async def _raw(self, hex_str: str) -> list[str]:
+        from memobird_printer.ble import BlePrinter
+
+        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
+            frames = await dev.send_hex(hex_str)
+            return [f.hex(" ") for f in frames]
+
+    def raw(self, hex_str: str, timeout: float = 30) -> list[str]:
+        return self.call(self._raw(hex_str), timeout)
+
+    async def _cmd(self, cmd: int, tlvs: list[dict]) -> list[str]:
+        from memobird_printer import packet
+        from memobird_printer.ble import BlePrinter
+
+        payload = b""
+        for t in tlvs:
+            tag = int(t["tag"] if isinstance(t.get("tag"), int) else str(t["tag"]), 0)
+            if "hex" in t:
+                val = bytes.fromhex(str(t["hex"]).replace(" ", ""))
+            else:
+                val = bytes([int(t.get("value", 1))])
+            payload += packet.tlv(tag, val)
+        frame = packet.build_frame(cmd, payload)
+        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
+            frames = await dev.transact(frame, wait=1.0, retries=1)
+            return [f"tx {frame.hex(' ')}"] + [f"rx {f.hex(' ')}" for f in frames]
+
+    def cmd(self, cmd: int, tlvs: list[dict], timeout: float = 30) -> list[str]:
+        return self.call(self._cmd(cmd, tlvs), timeout)
+
+    async def _gatt(self) -> list[str]:
+        from memobird_printer.ble import BlePrinter
+
+        async with BlePrinter(self.target, echo=False) as dev:
+            return await dev.list_gatt()
+
+    def gatt(self, timeout: float = 30) -> list[str]:
+        return self.call(self._gatt(), timeout)
 
     def set_setting(self, tag: int, value: int, timeout: float = 30) -> dict:
         return self.call(self._set_setting(tag, value), timeout)
@@ -280,6 +327,10 @@ class PrintService:
                 raise PrinterNotReady("打印机缺纸（0x06=1）—— 放好纸再试")
 
             frames, meta = build_frames(req)
+            opt = {"flow": not req.get("noFlow", False),
+                   "window": int(req.get("window") or 1),
+                   "chunk": int(req.get("chunk") or 180),
+                   "settle": float(req.get("settle") or 0.002)}
 
             if self.backend == "lan":
                 result = self._print_lan(req, meta)
@@ -385,15 +436,43 @@ class PrintService:
             self.worker.send(frames, True)
         elif self.backend == "ble":
             with self.lock:
-                self.worker.send(frames, True)
+                self.worker.send(frames, True, **opt)
         elif self.backend == "spp":
             with self.lock:
-                self.worker.send(frames, True)
+                self.worker.send(frames, True, **opt)
         else:
             raise ValueError("该后端不支持走纸（局域网机型请直接打一张空白图）")
 
         self.count += 1
         return {"ok": True, "meta": meta, "frames": len(frames)}
+
+    def raw(self, req: dict) -> dict:
+        """发任意十六进制帧（底层）"""
+        if self.backend != "ble" or not isinstance(self.worker, BleWorker):
+            return {"ok": False, "error": "只有 ble 后端支持 raw"}
+        hex_str = (req.get("hex") or "").strip()
+        if not hex_str:
+            raise ValueError("缺少 hex")
+        with self.lock:
+            replies = self.worker.raw(hex_str)
+        return {"ok": True, "sent": hex_str, "replies": replies}
+
+    def cmd(self, req: dict) -> dict:
+        """发命令 + TLV（底层）"""
+        if self.backend != "ble" or not isinstance(self.worker, BleWorker):
+            return {"ok": False, "error": "只有 ble 后端支持 cmd"}
+        cmd = int(req["cmd"] if isinstance(req.get("cmd"), int) else str(req.get("cmd")), 0)
+        tlvs = req.get("tlv") or []
+        with self.lock:
+            lines = self.worker.cmd(cmd, tlvs)
+        return {"ok": True, "cmd": f"0x{cmd:02x}", "lines": lines}
+
+    def gatt(self) -> dict:
+        if self.backend != "ble" or not isinstance(self.worker, BleWorker):
+            return {"ok": False, "error": "只有 ble 后端支持 gatt"}
+        with self.lock:
+            lines = self.worker.gatt()
+        return {"ok": True, "services": lines}
 
     def health(self) -> dict:
         info = {"ok": True, "version": VERSION, "backend": self.backend, "target": self.target}
@@ -632,6 +711,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "error": "unauthorized"})
                 return
             self._json(200, self.service.status())
+        elif path == "/gatt":
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                out = self.service.gatt()
+                self._json(200 if out.get("ok") else 400, out)
+            except Exception as exc:                             # noqa: BLE001
+                self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         elif path == "/jobs":
             if not self._authorized():
                 self._json(401, {"ok": False, "error": "unauthorized"})
@@ -680,6 +768,21 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._json(400, {"ok": False, "error": str(exc)})
             except Exception as exc:                                # noqa: BLE001
+                self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        # 底层：任意帧 / 命令
+        if path in ("/raw", "/cmd"):
+            if not self._authorized():
+                self._json(401, {"ok": False, "error": "unauthorized"})
+                return
+            try:
+                body = self._read_json()
+                out = self.service.raw(body) if path == "/raw" else self.service.cmd(body)
+                self._json(200 if out.get("ok") else 400, out)
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:                             # noqa: BLE001
                 self._json(503, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
             return
 

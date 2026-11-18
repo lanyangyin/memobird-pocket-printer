@@ -103,6 +103,18 @@ python -m memobird_printer preview "文本" -o p.png       # 本地看抖动效�
 * 静态网页：**1.1.0** · 服务端网页：**2.1.0** · 打印服务：**1.1.0**
 * 详见 [`docs/更新日志.md`](docs/更新日志.md)
 
+## 底层操作（固件能做的都能驱）
+
+```bash
+python -m memobird_printer raw  aa01000154 --ble <地址>          # 发任意帧
+python -m memobird_printer cmd  0x08 --ble <地址>                # 发命令
+python -m memobird_printer cmd  0x03 --tlv 0x02:6 --ble <地址>   # 写浓度
+python -m memobird_printer notify --seconds 15 --ble <地址>      # 监听通知
+python -m memobird_printer gatt-read --list --ble <地址>         # 列 GATT
+```
+
+HTTP：`POST /raw`、`POST /cmd`、`GET /gatt`；网页调试页有「底层操作」面板。
+
 ## 定时 / 远程打印
 
 ```bash

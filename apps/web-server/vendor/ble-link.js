@@ -195,6 +195,18 @@
       return notifications.slice(start);
     }
 
+    /** 发任意十六进制帧（底层），返回回包（hex 字符串数组） */
+    async function sendHex(hexStr, waitMs) {
+      const bytes = BLE.hexToBytes(hexStr);
+      const frames = await query(bytes, waitMs == null ? 900 : waitMs);
+      return frames.map((f) => BLE.bytesToHex(f));
+    }
+
+    /** 列出 GATT 服务/特征值 */
+    async function listGatt() {
+      return dumpGatt();
+    }
+
     /** 读设备信息（cmd 0x01），返回解析后的对象数组 */
     async function readDeviceInfo(waitMs) {
       const frames = await query(BLE.STATUS_FRAME, waitMs);

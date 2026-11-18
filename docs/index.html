@@ -159,7 +159,7 @@ footer {
   <div class="brand">
     <span class="logo">MB</span>
     <div>
-      <h1>口袋打印机控制台 <small class="ver">v1.2.0</small></h1>
+      <h1>口袋打印机控制台 <small class="ver">v1.3.0</small></h1>
       <p class="sub">实现 1｜纯静态网页（零后端）</p>
     </div>
   </div>
@@ -285,6 +285,19 @@ footer {
         <button id="btn-led-on" class="ghost">开灯</button>
         <button id="btn-led-off" class="ghost">关灯</button>
         <button id="btn-device" class="ghost">读设备信息</button>
+      <h3>底层操作</h3>
+      <textarea id="raw-hex" rows="2" placeholder="任意帧，如 aa 01 00 01 54（读状态）"></textarea>
+      <div class="actions">
+        <button id="btn-raw" class="ghost">发送帧</button>
+        <button id="btn-notify" class="ghost">监听通知 5 秒</button>
+      </div>
+      <div class="row">
+        <label>cmd <input id="cmd-code" value="0x08" size="6"></label>
+        <label>tag <input id="cmd-tag" value="0x02" size="6"></label>
+        <label>value <input id="cmd-val" value="6" size="4"></label>
+        <button id="btn-cmd" class="ghost">发命令</button>
+      </div>
+      <pre id="raw-out"></pre>
         <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
       </div>
@@ -445,6 +458,20 @@ footer {
     0x14: { name: 'counter_14', label: '8 字节计数?', confirmed: false },
   };
 
+  /** "aa 01 00 54" → Uint8Array */
+  function hexToBytes(str) {
+    const clean = (str || '').replace(/0x/gi, '').replace(/[^0-9a-fA-F]/g, '');
+    if (clean.length % 2) throw new Error('十六进制长度必须是偶数');
+    const out = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+
+  /** Uint8Array → "aa 01 00" */
+  function bytesToHex(bytes) {
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
+  }
+
   /** cmd 0x01：读状态（详版）。校验和已算好：aa 01 00 01 54 */
   const STATUS_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x01, 0x54]);
   /** cmd 0x08：提交/结束任务（不驱动电机，但能让固件把位图打出来） */
@@ -579,6 +606,7 @@ footer {
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
+    hexToBytes, bytesToHex,
   };
 });
 
@@ -778,6 +806,18 @@ footer {
       await writeAll(frame, '', chunk || 20);
       await sleep(waitMs == null ? 1500 : waitMs);
       return notifications.slice(start);
+    }
+
+    /** 发任意十六进制帧（底层），返回回包（hex 字符串数组） */
+    async function sendHex(hexStr, waitMs) {
+      const bytes = BLE.hexToBytes(hexStr);
+      const frames = await query(bytes, waitMs == null ? 900 : waitMs);
+      return frames.map((f) => BLE.bytesToHex(f));
+    }
+
+    /** 列出 GATT 服务/特征值 */
+    async function listGatt() {
+      return dumpGatt();
     }
 
     /** 读设备信息（cmd 0x01），返回解析后的对象数组 */
@@ -1946,6 +1986,47 @@ async function toggleLed(on) {
     else log(`指示灯 = ${state}（${state ? '亮' : '灭'}）`, state === (on ? 1 : 0) ? 'ok' : 'warn');
   } catch (e) { log('灯操作失败：' + (e.message || e), 'err'); }
 }
+
+/* --------------------------------------------------------------- 底层 */
+const rawOut = (line) => {
+  const el = $('#raw-out');
+  el.textContent = (el.textContent ? el.textContent + '\n' : '') + line;
+};
+
+$('#btn-raw').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  const hex = $('#raw-hex').value.trim();
+  if (!hex) { log('填一个帧，例如 aa 01 00 01 54', 'warn'); return; }
+  try {
+    const replies = await link.sendHex(hex);
+    rawOut(`TX ${hex}`);
+    replies.forEach((r) => rawOut(`RX ${r}`));
+    if (!replies.length) rawOut('（无回包）');
+  } catch (e) { rawOut('错误: ' + (e.message || e)); }
+});
+
+$('#btn-cmd').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  try {
+    const cmd = parseInt($('#cmd-code').value, 0);
+    const tag = parseInt($('#cmd-tag').value, 0);
+    const val = parseInt($('#cmd-val').value, 0);
+    const frame = window.MBBle.buildFrame(cmd, window.MBBle.tlv8(tag, val));
+    const replies = await link.sendHex(window.MBBle.bytesToHex(frame));
+    rawOut(`TX ${window.MBBle.bytesToHex(frame)}  (cmd=0x${cmd.toString(16)} tag=0x${tag.toString(16)}=${val})`);
+    replies.forEach((r) => rawOut(`RX ${r}`));
+  } catch (e) { rawOut('错误: ' + (e.message || e)); }
+});
+
+$('#btn-notify').addEventListener('click', async () => {
+  if (!link.connected) { log('先连接', 'warn'); return; }
+  rawOut('监听 5 秒…');
+  try {
+    const frames = await link.query(new Uint8Array(0), 5000);
+    frames.forEach((f) => rawOut(`RX ${window.MBBle.bytesToHex(f)}`));
+    rawOut(`共 ${frames.length} 帧`);
+  } catch (e) { rawOut('错误: ' + (e.message || e)); }
+});
 
 $('#btn-gatt').addEventListener('click', async () => {
   if (!link.connected) { log('先连接', 'warn'); return; }

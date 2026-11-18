@@ -350,6 +350,7 @@ class PrintService:
         self.settings_file = settings_file
         self._settings = self.load_settings()
         self.pending_reprint: dict | None = None
+        self._last_paper: dict | None = None
         self.last_job: dict | None = None      # 最近一次成功打印（供复查缺纸）      # 缺纸后等着重打的那一单
         self._monitor_stop = threading.Event()
         self._monitor: threading.Thread | None = None
@@ -389,6 +390,16 @@ class PrintService:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:                                      # noqa: BLE001
             pass
+
+    def remember_paper(self, paper, when: str | None = None) -> None:
+        """把"最后已知缺纸状态"存下来（写进 settings 文件，重启也能看）"""
+        self._last_paper = {"paperOut": paper,
+                            "at": when or time.strftime("%Y-%m-%d %H:%M:%S")}
+        cfg = dict(self._settings)
+        cfg["lastPaperOut"] = paper
+        cfg["lastPaperOutAt"] = self._last_paper["at"]
+        self._settings = cfg
+        self.save_settings(cfg)
 
     def settings(self) -> dict:
         return dict(self._settings)
@@ -555,8 +566,11 @@ class PrintService:
             out.update(result)
 
             # 缺纸判定：直接用打印过程中固件推来的状态，不再单独连一次去查
+            pushed = getattr(self.worker, "last_push_paper", None)
+            if pushed is not None:
+                self.remember_paper(pushed)
+
             if self._settings.get("autoReprint", True):
-                pushed = getattr(self.worker, "last_push_paper", None)
                 if pushed is True:
                     self.mark_pending_reprint(req, meta)
                     out["paperOut"] = True
@@ -592,10 +606,10 @@ class PrintService:
             "last_error": self.last_error,
             "paper_out": getattr(self, "last_paper_out", None),
             # 最后一次打印时固件推送里读到的缺纸状态（现在连不上也能看）
-            "paperOutLastKnown": getattr(getattr(self, "worker", None),
-                                         "last_push_paper", None),
-            "paperOutLastKnownAt": getattr(getattr(self, "worker", None),
-                                           "last_push_paper_at", None),
+            "paperOutLastKnown": (self._last_paper or {}).get(
+                "paperOut", getattr(getattr(self, "worker", None), "last_push_paper", None)),
+            "paperOutLastKnownAt": (self._last_paper or {}).get(
+                "at", getattr(getattr(self, "worker", None), "last_push_paper_at", None)),
             "pendingReprint": self.pending_reprint,
             "settings": self.settings(),
         }

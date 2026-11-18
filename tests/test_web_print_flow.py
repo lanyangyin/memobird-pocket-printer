@@ -103,7 +103,7 @@ MOCK = r"""
     async setLed(on) { cap.settings.push('led:' + on); return on ? 1 : 0; },
   };
 
-  const mod = { createLink: () => link, __mock: true };
+  const mod = { createLink: (o) => { window.__CAP__.opts = o || {}; return link; }, __mock: true };
   Object.defineProperty(window, 'MBLink', {
     configurable: true,
     get() { return mod; },
@@ -259,6 +259,20 @@ def main() -> int:
         check("有 autoReprintIfNeeded()", ar["hasAuto"], True)
 
         # 5y. 缺纸判定逻辑在 ble-util.paperFromFrames()，由 test_ble_util.js 覆盖
+
+        # 5x. 固件主动断开时，界面状态必须跟着变（曾经日志"断开"、胶囊还写"已连接"）
+        dc = cdp.eval("""(async () => {
+          const opts = window.__CAP__.opts || {};
+          const hasHook = typeof opts.onDisconnect === 'function';
+          link.state.connected = true;
+          setChip(document.querySelector('#conn'), '已连接 GT1 · 写 ff02', 'ok');
+          if (hasHook) opts.onDisconnect(link.state);
+          await new Promise((r) => setTimeout(r, 50));
+          const el = document.querySelector('#conn');
+          return { hasHook, text: el.textContent, cls: el.className };
+        })()""")
+        check("app 注册了 onDisconnect", dc["hasHook"], True)
+        check("断开后胶囊显示未连接", dc["text"], "未连接")
 
         # 5a. 预览也要包含固件固定的 11mm 上下边距（所见即所得）
         prev = cdp.eval("""(async () => {

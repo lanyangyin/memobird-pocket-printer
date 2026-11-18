@@ -9,7 +9,17 @@ const { $, createLogger, initTabs, setChip, setProgress, b64ToBytes, copyText, k
 const APP_VERSION = '__VER__';   // serve.py 响应时注入
 
 const log = createLogger($('#log'));
-const link = window.MBLink.createLink({ log });
+const link = window.MBLink.createLink({
+  log,
+  // 固件主动断开时也要把界面状态改掉（否则日志显示"断开"、状态还写"已连接"）
+  onDisconnect: () => {
+    try {
+      setChip($('#conn'), '未连接', 'warn');
+      updateBattery();
+      stopBatteryTimer();
+    } catch (e) { /* 页面还没初始化完 */ }
+  },
+});
 
 const state = { imageDataUrl: null, busy: false, version: '?' };
 

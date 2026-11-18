@@ -230,7 +230,7 @@ footer {
   <div class="brand">
     <span class="logo">MB</span>
     <div>
-      <h1>口袋打印机控制台 <small class="ver">v1.5.0</small></h1>
+      <h1>口袋打印机控制台 <small class="ver">v1.5.1</small></h1>
       <p class="sub">实现 1｜纯静态网页（零后端）</p>
     </div>
   </div>
@@ -1904,10 +1904,20 @@ footer {
 const { $, createLogger, initTabs, setChip, setProgress, copyText, keepAwake } = window.MBUI;
 const E = window.MBEncoder;
 const R = window.MBRender;
-const APP_VERSION = '1.5.0';   // 构建时注入
+const APP_VERSION = '1.5.1';   // 构建时注入
 
 const log = createLogger($('#log'));
-const link = window.MBLink.createLink({ log });
+const link = window.MBLink.createLink({
+  log,
+  // 固件主动断开时也要把界面状态改掉（否则日志显示"断开"、状态还写"已连接"）
+  onDisconnect: () => {
+    try {
+      setChip($('#conn'), '未连接', 'warn');
+      updateBattery();
+      stopBatteryTimer();
+    } catch (e) { /* 页面还没初始化完 */ }
+  },
+});
 
 const state = { imageDataUrl: null, imageEl: null, busy: false };
 

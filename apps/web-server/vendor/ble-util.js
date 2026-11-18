@@ -145,6 +145,24 @@
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
   }
 
+  /**
+   * 从一组通知帧里找**最近一条状态帧**的缺纸标志（tag 0x06）。
+   * 缺纸时固件只推送、不回应查询，所以判定必须走这里。
+   * @returns {boolean|null} true=缺纸 / false=有纸 / null=没有状态帧
+   */
+  function paperFromFrames(frames) {
+    for (let i = frames.length - 1; i >= 0; i--) {
+      let p = null;
+      try { p = parseFrame(frames[i]); } catch (e) { continue; }
+      if (!p || !p.tlvs) continue;
+      if (p.cmd !== 0x0a && p.cmd !== 0x01 && p.cmd !== 0x02) continue;
+      for (const t of p.tlvs) {
+        if (t.tag === 0x06 && t.len >= 1) return t.value[0] === 1;
+      }
+    }
+    return null;
+  }
+
   /** cmd 0x01：读状态（详版）。校验和已算好：aa 01 00 01 54 */
   const STATUS_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x01, 0x54]);
   /** cmd 0x08：提交/结束任务（不驱动电机，但能让固件把位图打出来） */
@@ -279,6 +297,6 @@
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
-    hexToBytes, bytesToHex,
+    hexToBytes, bytesToHex, paperFromFrames,
   };
 });

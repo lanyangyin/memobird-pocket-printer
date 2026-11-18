@@ -173,7 +173,10 @@
             if (t.tag === 0x0c && t.len >= 1) got = t.value[0];
           }
         }
-        if (total != null && got != null && got >= total) return { total, got };
+        if (total != null && got != null) {
+          if (total === 0 && got > 0) return { total, got, aborted: true };
+          if (got >= total && total > 0) return { total, got };
+        }
         await sleep(60);
       }
       return null;
@@ -200,7 +203,9 @@
       }
       // 关键：等固件确认收完，否则紧接着发的收尾帧会被丢掉（打印不出来）
       const ack = await waitJobAck(mark, cfg.ackTimeout == null ? 8000 : cfg.ackTimeout);
-      if (ack) emit(`固件已收完 ${ack.got}/${ack.total} 帧`, 'ok');
+      if (ack && ack.aborted) {
+        emit(`固件中止了（只收到 ${ack.got} 帧）—— 大概率缺纸`, 'warn');
+      } else if (ack) emit(`固件已收完 ${ack.got}/${ack.total} 帧`, 'ok');
       else emit('没等到固件收完确认 —— 收尾帧可能被忽略', 'warn');
       emit(`${label || '打印'} 已全部发送（${(performance.now() - t0).toFixed(0)}ms）`, 'ok');
     }
@@ -298,6 +303,15 @@
       return reconnect();
     }
 
+    /**
+     * 从最近收到的通知（含固件主动推的 0x0A）里读缺纸标志。
+     * 缺纸时固件**不回应查询**，只推送，所以必须走这条路。
+     * @returns {boolean|null} true=缺纸 / false=有纸 / null=没有状态帧
+     */
+    function lastPaperOut() {
+      return BLE.paperFromFrames(notifications);
+    }
+
     /** 读当前打印浓度（tag 0x02），读不到返回 null */
     async function getDensity() {
       const infos = await readDeviceInfo(1200);
@@ -334,7 +348,7 @@
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
-      sendHex, listGatt, reconnect, ensureConnected,
+      sendHex, listGatt, reconnect, ensureConnected, lastPaperOut,
       waitJobAck,
       get connected() { return state.connected; },
     };

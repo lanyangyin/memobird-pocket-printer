@@ -541,6 +541,24 @@ footer {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
   }
 
+  /**
+   * 从一组通知帧里找**最近一条状态帧**的缺纸标志（tag 0x06）。
+   * 缺纸时固件只推送、不回应查询，所以判定必须走这里。
+   * @returns {boolean|null} true=缺纸 / false=有纸 / null=没有状态帧
+   */
+  function paperFromFrames(frames) {
+    for (let i = frames.length - 1; i >= 0; i--) {
+      let p = null;
+      try { p = parseFrame(frames[i]); } catch (e) { continue; }
+      if (!p || !p.tlvs) continue;
+      if (p.cmd !== 0x0a && p.cmd !== 0x01 && p.cmd !== 0x02) continue;
+      for (const t of p.tlvs) {
+        if (t.tag === 0x06 && t.len >= 1) return t.value[0] === 1;
+      }
+    }
+    return null;
+  }
+
   /** cmd 0x01：读状态（详版）。校验和已算好：aa 01 00 01 54 */
   const STATUS_FRAME = Uint8Array.from([0xaa, 0x01, 0x00, 0x01, 0x54]);
   /** cmd 0x08：提交/结束任务（不驱动电机，但能让固件把位图打出来） */
@@ -675,7 +693,7 @@ footer {
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
-    hexToBytes, bytesToHex,
+    hexToBytes, bytesToHex, paperFromFrames,
   };
 });
 
@@ -855,7 +873,10 @@ footer {
             if (t.tag === 0x0c && t.len >= 1) got = t.value[0];
           }
         }
-        if (total != null && got != null && got >= total) return { total, got };
+        if (total != null && got != null) {
+          if (total === 0 && got > 0) return { total, got, aborted: true };
+          if (got >= total && total > 0) return { total, got };
+        }
         await sleep(60);
       }
       return null;
@@ -882,7 +903,9 @@ footer {
       }
       // 关键：等固件确认收完，否则紧接着发的收尾帧会被丢掉（打印不出来）
       const ack = await waitJobAck(mark, cfg.ackTimeout == null ? 8000 : cfg.ackTimeout);
-      if (ack) emit(`固件已收完 ${ack.got}/${ack.total} 帧`, 'ok');
+      if (ack && ack.aborted) {
+        emit(`固件中止了（只收到 ${ack.got} 帧）—— 大概率缺纸`, 'warn');
+      } else if (ack) emit(`固件已收完 ${ack.got}/${ack.total} 帧`, 'ok');
       else emit('没等到固件收完确认 —— 收尾帧可能被忽略', 'warn');
       emit(`${label || '打印'} 已全部发送（${(performance.now() - t0).toFixed(0)}ms）`, 'ok');
     }
@@ -980,6 +1003,15 @@ footer {
       return reconnect();
     }
 
+    /**
+     * 从最近收到的通知（含固件主动推的 0x0A）里读缺纸标志。
+     * 缺纸时固件**不回应查询**，只推送，所以必须走这条路。
+     * @returns {boolean|null} true=缺纸 / false=有纸 / null=没有状态帧
+     */
+    function lastPaperOut() {
+      return BLE.paperFromFrames(notifications);
+    }
+
     /** 读当前打印浓度（tag 0x02），读不到返回 null */
     async function getDensity() {
       const infos = await readDeviceInfo(1200);
@@ -1016,7 +1048,7 @@ footer {
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
-      sendHex, listGatt, reconnect, ensureConnected,
+      sendHex, listGatt, reconnect, ensureConnected, lastPaperOut,
       waitJobAck,
       get connected() { return state.connected; },
     };
@@ -2219,10 +2251,15 @@ function autoReprintEnabled() {
   return el ? el.checked : true;
 }
 
-/** 读一次缺纸标志：true=缺纸 / false=有纸 / null=读不到 */
+/**
+ * 读缺纸标志。优先用固件主动推送的状态帧 ——
+ * 实测：缺纸时固件**不回应查询**，只推送，查询会一直等到超时。
+ */
 async function paperOutNow() {
+  const pushed = link.lastPaperOut ? link.lastPaperOut() : null;
+  if (pushed !== null) return pushed;
   try {
-    const frames = await link.query(window.MBBle.STATUS_FRAME, 500);
+    const frames = await link.query(window.MBBle.STATUS_FRAME, 600);
     for (const f of frames) {
       const p = window.MBBle.parseFrame(f);
       if (!p || !p.tlvs) continue;
@@ -2243,7 +2280,7 @@ async function autoReprintIfNeeded(rerun) {
   for (let i = 0; i < 200; i++) {          // 最多等 10 分钟
     await new Promise((r) => setTimeout(r, 3000));
     if (!link.connected) { log('连接已断开，取消自动重打', 'warn'); return; }
-    const now = await paperOutNow();
+    const now = (link.lastPaperOut ? link.lastPaperOut() : null);
     if (now === false) {
       log('检测到有纸 → 自动重打', 'ok');
       try { await rerun(); } catch (e) { log('重打失败：' + (e.message || e), 'err'); }

@@ -258,6 +258,8 @@ def main() -> int:
         check("有 paperOutNow()", ar["hasPaperOut"], True)
         check("有 autoReprintIfNeeded()", ar["hasAuto"], True)
 
+        # 5y. 缺纸判定逻辑在 ble-util.paperFromFrames()，由 test_ble_util.js 覆盖
+
         # 5a. 预览也要包含固件固定的 11mm 上下边距（所见即所得）
         prev = cdp.eval("""(async () => {
           await preview({kind:'text', text:'Hello', format:'bmp'});

@@ -117,6 +117,16 @@ function gt1(style) {
     check('link API 导出完整（缺的会列出）', mustHave.filter((k) => typeof api[k] !== 'function'), []);
   }
 
+  // ---- 缺纸判定：必须能从固件推送的 0x0A 里读出来 ----
+  {
+    const push = (v) => ble.buildFrame(0x0a, ble.tlv8(0x06, v));
+    check('从推送读缺纸=true', ble.paperFromFrames([push(1)]), true);
+    check('从推送读缺纸=false', ble.paperFromFrames([push(0)]), false);
+    check('取最近一条', ble.paperFromFrames([push(1), push(0)]), false);
+    check('没有状态帧返回 null', ble.paperFromFrames([]), null);
+    check('非状态帧被忽略', ble.paperFromFrames([ble.buildFrame(0x04, ble.tlv8(0x0b, 1))]), null);
+  }
+
   console.log();
   if (fails.length) { console.log(`失败 ${fails.length} 项: ${fails}`); process.exit(1); }
   console.log(`全部通过 ✅（${pass} 项）`);

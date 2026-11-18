@@ -380,10 +380,15 @@ function autoReprintEnabled() {
   return el ? el.checked : true;
 }
 
-/** 读一次缺纸标志：true=缺纸 / false=有纸 / null=读不到 */
+/**
+ * 读缺纸标志。优先用固件主动推送的状态帧 ——
+ * 实测：缺纸时固件**不回应查询**，只推送，查询会一直等到超时。
+ */
 async function paperOutNow() {
+  const pushed = link.lastPaperOut ? link.lastPaperOut() : null;
+  if (pushed !== null) return pushed;
   try {
-    const frames = await link.query(window.MBBle.STATUS_FRAME, 500);
+    const frames = await link.query(window.MBBle.STATUS_FRAME, 600);
     for (const f of frames) {
       const p = window.MBBle.parseFrame(f);
       if (!p || !p.tlvs) continue;
@@ -404,7 +409,7 @@ async function autoReprintIfNeeded(rerun) {
   for (let i = 0; i < 200; i++) {          // 最多等 10 分钟
     await new Promise((r) => setTimeout(r, 3000));
     if (!link.connected) { log('连接已断开，取消自动重打', 'warn'); return; }
-    const now = await paperOutNow();
+    const now = (link.lastPaperOut ? link.lastPaperOut() : null);
     if (now === false) {
       log('检测到有纸 → 自动重打', 'ok');
       try { await rerun(); } catch (e) { log('重打失败：' + (e.message || e), 'err'); }

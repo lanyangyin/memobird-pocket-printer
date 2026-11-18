@@ -284,8 +284,12 @@ async def wait_for_paper(link, *, timeout: float | None = 300.0,
     while True:
         elapsed = _time.monotonic() - t0
         try:
-            infos = await read_info(link, detail=False, wait=1.0)
-            missing = paper_out(infos[-1] if infos else None)
+            # 优先用 BlePrinter.paper_state（查询失败会退回固件推送的那一帧）
+            if hasattr(link, "paper_state"):
+                missing = await link.paper_state()
+            else:
+                infos = await read_info(link, detail=False, wait=1.5, attempts=2)
+                missing = paper_out(infos[-1] if infos else None)
         except Exception:                                      # noqa: BLE001
             missing = None                                     # 读不到就当不知道
         if missing is False:                                   # 明确"有纸"

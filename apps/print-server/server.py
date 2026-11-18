@@ -211,6 +211,7 @@ class BleWorker:
             # 顺带看固件在这期间推来的状态帧（0x0A）里有没有"缺纸"
             await asyncio.sleep(0.3)
             self.last_push_paper = _dev.paper_out_from_notifies(dev._notifies)
+            self.last_push_paper_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
     def send(self, frames: list[bytes], preheat: bool, timeout: float = 180,
              flow: bool = True, window: int = 1, chunk: int = 180, settle: float = 0.002,
@@ -280,6 +281,9 @@ class BleWorker:
 
         async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
             return await dev.paper_state()
+
+    last_push_paper: bool | None = None
+    last_push_paper_at: str | None = None
 
     def paper_state(self, timeout: float = 30) -> bool | None:
         try:
@@ -587,6 +591,11 @@ class PrintService:
             "last": self.last,
             "last_error": self.last_error,
             "paper_out": getattr(self, "last_paper_out", None),
+            # 最后一次打印时固件推送里读到的缺纸状态（现在连不上也能看）
+            "paperOutLastKnown": getattr(getattr(self, "worker", None),
+                                         "last_push_paper", None),
+            "paperOutLastKnownAt": getattr(getattr(self, "worker", None),
+                                           "last_push_paper_at", None),
             "pendingReprint": self.pending_reprint,
             "settings": self.settings(),
         }

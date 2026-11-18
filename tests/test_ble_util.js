@@ -154,6 +154,16 @@ function gt1(style) {
     check('空数组返回 null', ble.statusFromFrames([]), null);
   }
 
+  // ---- 真实故障回归：connect() 的通知曾没进缓冲，导致电量/缺纸永远显示不出来 ----
+  {
+    const src = require('fs').readFileSync(
+      path.join(path.resolve(__dirname, '..'), 'shared', 'web', 'ble-link.js'), 'utf8');
+    const blocks = src.split("addEventListener('characteristicvaluechanged'");
+    // 每个监听器块里都应当有 notifications.push
+    const missing = blocks.slice(1).filter((b) => !b.slice(0, 700).includes('notifications.push'));
+    check('每个通知监听器都往缓冲里 push（缺几个）', missing.length, 0);
+  }
+
   console.log();
   if (fails.length) { console.log(`失败 ${fails.length} 项: ${fails}`); process.exit(1); }
   console.log(`全部通过 ✅（${pass} 项）`);

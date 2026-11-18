@@ -276,6 +276,12 @@
             const dv = e.target.value;
             const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
             state.lastNotify = bytes;
+            // 关键：也要进缓冲，否则状态栏（电量/缺纸）永远读不到东西
+            notifications.push(bytes);
+            if (notifications.length > 64) notifications.shift();
+            try {
+              emit(`notify ${bytes.length}B ${hex(bytes)}${describeFrame(bytes)}`, 'hex');
+            } catch (err) { /* 描述失败不影响状态 */ }
             if (opts.onNotify) opts.onNotify(bytes);
           });
         } catch (e) { emit('订阅通知失败：' + (e.message || e), 'warn'); }

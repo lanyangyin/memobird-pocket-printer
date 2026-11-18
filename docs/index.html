@@ -234,7 +234,7 @@ footer {
   <div class="brand">
     <span class="logo">MB</span>
     <div>
-      <h1>口袋打印机控制台 <small class="ver">v1.6.0</small></h1>
+      <h1>口袋打印机控制台 <small class="ver">v1.6.1</small></h1>
       <p class="sub">实现 1｜纯静态网页（零后端）</p>
     </div>
   </div>
@@ -1023,6 +1023,12 @@ footer {
             const dv = e.target.value;
             const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
             state.lastNotify = bytes;
+            // 关键：也要进缓冲，否则状态栏（电量/缺纸）永远读不到东西
+            notifications.push(bytes);
+            if (notifications.length > 64) notifications.shift();
+            try {
+              emit(`notify ${bytes.length}B ${hex(bytes)}${describeFrame(bytes)}`, 'hex');
+            } catch (err) { /* 描述失败不影响状态 */ }
             if (opts.onNotify) opts.onNotify(bytes);
           });
         } catch (e) { emit('订阅通知失败：' + (e.message || e), 'warn'); }
@@ -1937,7 +1943,7 @@ footer {
 const { $, createLogger, initTabs, setChip, setProgress, copyText, keepAwake } = window.MBUI;
 const E = window.MBEncoder;
 const R = window.MBRender;
-const APP_VERSION = '1.6.0';   // 构建时注入
+const APP_VERSION = '1.6.1';   // 构建时注入
 
 const log = createLogger($('#log'));
 const link = window.MBLink.createLink({
@@ -2168,6 +2174,7 @@ $('#btn-connect').addEventListener('click', async () => {
     keepAwake(true);
     updateStatusBar();
     startStatusTimer();
+    refreshStatusNow();     // 连上后立刻补一次（推送可能还没到）
   } catch (e) {
     log('连接失败：' + (e.message || e), 'err');
     setChip($('#conn'), '未连接', 'err');
@@ -2382,6 +2389,18 @@ function updateStatusBar() {
     }
     paper.title = '0x06：缺纸时固件只在连接瞬间推送一帧';
   }
+}
+
+/* 刚连上时立刻把状态刷出来：先看推送，没有就主动查一次，最多试 3 轮 */
+async function refreshStatusNow() {
+  for (let i = 0; i < 3; i++) {
+    updateStatusBar();
+    const st = link.lastStatus ? link.lastStatus() : null;
+    if (st && (st.battery || st.paper != null)) return;
+    try { await link.query(window.MBBle.STATUS_FRAME, 600); } catch (e) { /* 忽略 */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  updateStatusBar();
 }
 
 function startStatusTimer() {

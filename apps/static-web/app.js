@@ -239,6 +239,7 @@ $('#btn-connect').addEventListener('click', async () => {
     keepAwake(true);
     updateStatusBar();
     startStatusTimer();
+    refreshStatusNow();     // 连上后立刻补一次（推送可能还没到）
   } catch (e) {
     log('连接失败：' + (e.message || e), 'err');
     setChip($('#conn'), '未连接', 'err');
@@ -453,6 +454,18 @@ function updateStatusBar() {
     }
     paper.title = '0x06：缺纸时固件只在连接瞬间推送一帧';
   }
+}
+
+/* 刚连上时立刻把状态刷出来：先看推送，没有就主动查一次，最多试 3 轮 */
+async function refreshStatusNow() {
+  for (let i = 0; i < 3; i++) {
+    updateStatusBar();
+    const st = link.lastStatus ? link.lastStatus() : null;
+    if (st && (st.battery || st.paper != null)) return;
+    try { await link.query(window.MBBle.STATUS_FRAME, 600); } catch (e) { /* 忽略 */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  updateStatusBar();
 }
 
 function startStatusTimer() {

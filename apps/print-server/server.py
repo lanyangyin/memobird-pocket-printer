@@ -336,9 +336,15 @@ class PrintService:
             can_set_density = (self.backend == "ble" and isinstance(self.worker, BleWorker)
                                and not isinstance(self.worker, FakeWorker))
             if req_density and can_set_density:
-                with self.lock:
-                    state = self.worker.set_setting(0x02, max(1, min(10, req_density)))
-                density_before = state.get(0x02)
+                # 注意：这里不要加 self.lock —— print_request 外层已经持有（Lock 不可重入）
+                # 先读原值（set_setting 返回的是写入后的状态，不能当原值用）
+                try:
+                    infos, _paper = self.worker.read_info(timeout=20)
+                    if infos:
+                        density_before = (infos[-1].get("fields", {}).get("0x02") or {}).get("int")
+                except Exception:                                  # noqa: BLE001
+                    density_before = None
+                self.worker.set_setting(0x02, max(1, min(10, req_density)))
                 meta["density"] = req_density
                 meta["densityBefore"] = density_before
 
@@ -358,8 +364,7 @@ class PrintService:
             # 恢复原浓度
             if req_density and can_set_density and density_before is not None:
                 try:
-                    with self.lock:
-                        self.worker.set_setting(0x02, int(density_before))
+                    self.worker.set_setting(0x02, int(density_before))
                     result["densityRestored"] = density_before
                 except Exception:                                  # noqa: BLE001
                     result["densityRestoreError"] = True

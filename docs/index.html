@@ -32,8 +32,10 @@ body {
 
 .top-actions {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-end; flex: 0 1 auto;
 }
+.top-actions > button { flex: 0 0 auto; padding: 9px 18px; }
+.top-actions > label { flex: 0 0 auto; }
 .top-actions button, .top-actions label { white-space: nowrap; }
 button { white-space: nowrap; }
 
@@ -52,8 +54,23 @@ button { white-space: nowrap; }
   textarea, pre { font-size: 12px; }
 }
 
-/* 宽屏别无限拉伸：内容居中，最大 720px（和手机观感一致） */
+/* 窄屏：单列居中（手机观感） */
 main, body > header { max-width: 720px; margin-left: auto; margin-right: auto; }
+
+/* 宽屏（>=1024px）：左右两栏 —— 左边操作、右边预览 */
+@media (min-width: 1024px) {
+  body > header { max-width: 1180px; }
+  main {
+    max-width: 1180px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+    gap: 16px;
+    align-items: start;
+  }
+  main > .card:first-child { margin-bottom: 0; }
+  main > .card:last-child { position: sticky; top: 16px; }
+  .preview-wrap { max-height: 74vh; }
+}
 
 header {
   display: flex;
@@ -74,10 +91,13 @@ h1 { font-size: 17px; margin: 0; }
 .sub { margin: 0; font-size: 11px; color: var(--dim); }
 
 .conn {
+  display: inline-block;            /* 自适应内容宽度，不再撑满整行 */
+  max-width: 100%;
   font-size: 12px; color: var(--dim);
-  padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px;
-  margin-bottom: 12px; word-break: break-all;
+  padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
+  margin: 0 0 12px; word-break: break-all; line-height: 1.4;
 }
+.conn:empty { display: none; }
 .conn.ok { color: var(--ok); border-color: #1f4d2b; }
 .conn.err { color: var(--err); border-color: #55242a; }
 
@@ -147,10 +167,12 @@ h2 { font-size: 14px; margin: 0 0 8px; color: var(--dim); font-weight: 600; }
 .preview-wrap {
   background: transparent; padding: 0; margin: 0 auto;
   min-height: 40px; display: flex; justify-content: center;
+  align-items: flex-start;           /* 关键：否则 flex 会把图片纵向拉伸 */
   max-height: 62vh; overflow: auto;
 }
 .preview-wrap img {
-  display: block; width: 100%; max-width: 100%; image-rendering: pixelated;
+  display: block; width: auto; height: auto; max-width: 100%;
+  image-rendering: pixelated;
   background: #fff;                      /* 纸面 */
   border-radius: 4px;
   box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0,0,0,.35);
@@ -196,7 +218,8 @@ footer {
       <p class="sub">实现 1｜纯静态网页（零后端）</p>
     </div>
   </div>
-  <button id="btn-connect" class="primary">连接打印机</button>
+    <div class="top-actions">
+      <button id="btn-connect" class="primary">连接打印机</button>
         <button id="btn-disconnect" class="ghost">断开</button>
         <label>浓度
           <select id="density">

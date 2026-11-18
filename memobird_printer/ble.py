@@ -163,6 +163,21 @@ class BlePrinter:
         await asyncio.sleep(seconds)
         return list(self._notifies)
 
+    @property
+    def is_connected(self) -> bool:
+        try:
+            return bool(self._client and self._client.is_connected)
+        except Exception:                                  # noqa: BLE001
+            return False
+
+    async def reconnect(self) -> None:
+        """打印任务结束后固件常主动断开 —— 需要时重新连上"""
+        try:
+            await self.__aexit__()
+        except Exception:                                  # noqa: BLE001
+            pass
+        await self.__aenter__()
+
     async def wait_last_ack(self, total: int, timeout: float = 3.0) -> bool:
         """等固件 ack 到第 total 帧（cmd 0x04 ack 里 `0x0C` 是包序）。
 

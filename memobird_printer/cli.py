@@ -227,11 +227,12 @@ def cmd_print(args) -> int:
                                   settle=getattr(args, "settle", 0.002),
                                   batch=getattr(args, "batch", 1),
                                   window=getattr(args, "window", 1)) as b:
+              dens = getattr(args, "density", 0) or 0
+              restore = None
+              try:
                 preheat = not getattr(args, "no_preheat", False)
 
                 # 降浓度 = 每行加热更久 = 打印变慢 → 慢速 BLE 下长图才打得完整
-                dens = getattr(args, "density", 0) or 0
-                restore = None
                 if dens:
                     from . import device as _dev
                     infos = await _dev.read_info(b, detail=False, wait=1.2)
@@ -291,13 +292,23 @@ def cmd_print(args) -> int:
                         await asyncio.sleep(0.2)
                         await b.transact(packet.commit_frame(), wait=0.6, retries=1)
 
-                # 恢复原浓度
+
+              finally:
+                # 无论成功失败，都尽量把浓度恢复回去
                 if dens and restore is not None:
-                    await asyncio.sleep(0.2)
-                    await b.transact(packet.build_frame(packet.CMD_CONTROL,
-                                                        packet.tlv(0x02, bytes([int(restore)]))),
-                                     wait=0.4, retries=1)
-                    print(f"浓度已恢复为 {restore}")
+                    try:
+                        await asyncio.sleep(0.2)
+                        if not b.is_connected:
+                            # 打印结束后固件会主动断开，恢复浓度前先重连
+                            await b.reconnect()
+                        await b.transact(packet.build_frame(packet.CMD_CONTROL,
+                                                            packet.tlv(0x02, bytes([int(restore)]))),
+                                         wait=0.4, retries=2)
+                        print(f"浓度已恢复为 {restore}")
+                    except Exception as exc:                        # noqa: BLE001
+                        print(f"⚠ 浓度恢复失败（{type(exc).__name__}），设备当前浓度可能不是 {restore}",
+                              file=sys.stderr)
+
         asyncio.run(run())
         print("已发送")
         return 0

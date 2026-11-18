@@ -181,8 +181,17 @@ async function print(req, label) {
   }
 
   if (dens && restore != null) {
-    try { await link.setDensity(restore); log(`浓度已恢复为 ${restore}`, 'ok'); }
-    catch (e) { log('恢复浓度失败：' + (e.message || e), 'warn'); }
+    try {
+      await link.setDensity(restore);
+      log(`浓度已恢复为 ${restore}`, 'ok');
+    } catch (e) {
+      // 打印结束后固件常主动断开 —— 重连一次再恢复
+      try {
+        await link.connect();
+        await link.setDensity(restore);
+        log(`重连后浓度已恢复为 ${restore}`, 'ok');
+      } catch (e2) { log('恢复浓度失败：' + (e2.message || e2), 'warn'); }
+    }
   }
 }
 

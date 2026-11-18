@@ -14,11 +14,12 @@ const log = createLogger($('#log'));
 const link = window.MBLink.createLink({
   log,
   // 固件主动断开时也要把界面状态改掉（否则日志显示"断开"、状态还写"已连接"）
+  onNotify: () => { updateStatusBar(); },
   onDisconnect: () => {
     try {
       setChip($('#conn'), '未连接', 'warn');
-      updateBattery();
-      stopBatteryTimer();
+      updateStatusBar();
+      stopStatusTimer();
     } catch (e) { /* 页面还没初始化完 */ }
   },
 });
@@ -236,8 +237,8 @@ $('#btn-connect').addEventListener('click', async () => {
     await link.connect();
     setChip($('#conn'), `已连接 ${link.state.device.name || link.state.device.id} · 写 ${link.state.writeChr.uuid.slice(4, 8)}`, 'ok');
     keepAwake(true);
-    updateBattery();
-    startBatteryTimer();
+    updateStatusBar();
+    startStatusTimer();
   } catch (e) {
     log('连接失败：' + (e.message || e), 'err');
     setChip($('#conn'), '未连接', 'err');
@@ -254,8 +255,8 @@ $('#btn-disconnect').addEventListener('click', () => {
   try {
     link.disconnect();
     setChip($('#conn'), '未连接', 'warn');
-    updateBattery();
-    stopBatteryTimer();
+    updateStatusBar();
+    stopStatusTimer();
     log('已断开（打印机已释放，官方 App / 其它设备可以连了）', 'ok');
   } catch (e) { log('断开失败：' + (e.message || e), 'err'); }
 });
@@ -388,30 +389,78 @@ async function toggleLed(on) {
   });
 })();
 
-/* ------------------------------------------------- 电量（独立显示） */
-function updateBattery() {
-  const el = $('#battery');
-  if (!el) return;
-  const b = link.lastBattery ? link.lastBattery() : null;
-  if (!b || b.voltage == null) {
-    el.textContent = link.connected ? '电量 未知' : '电量 –';
-    el.className = 'conn bat';
-    return;
-  }
-  const pct = b.percent == null ? '?' : b.percent;
-  el.textContent = `电量 ${pct}% · ${b.voltage.toFixed(2)}V`;
-  el.className = 'conn bat' + (pct !== '?' && pct <= 20 ? ' err' : (pct !== '?' && pct <= 40 ? ' warn' : ' ok'));
-  el.title = '0x04 电池电压 × 0.05V 估算，±10%，负载时会偏低';
+
+/* ------------------------------------------------- 状态栏（在线 / 电量 / 缺纸） */
+let statusTimer = null;
+let lastSeenAt = null;        // 最近一次收到设备数据的时间
+
+function fmtAgo(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} 秒前`;
+  if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
+  return `${Math.round(s / 3600)} 小时前`;
 }
 
-/* 电量定时刷新（60 秒）：只读已收到的推送，不额外连设备 */
-let batteryTimer = null;
-function startBatteryTimer() {
-  stopBatteryTimer();
-  batteryTimer = setInterval(updateBattery, 60000);
+function updateStatusBar() {
+  const st = (link.lastStatus ? link.lastStatus() : null) || {};
+  const connected = link.connected;
+  if (st.at) lastSeenAt = st.at;
+
+  // ---- 在线 ----
+  const conn = $('#conn');
+  const name = (link.state && link.state.device)
+    ? (link.state.device.name || link.state.device.id) : '打印机';
+  if (connected) {
+    conn.textContent = `● 在线 · ${name}`;
+    conn.className = 'conn ok';
+  } else if (lastSeenAt) {
+    conn.textContent = `○ 离线 · 上次 ${fmtAgo(Date.now() - lastSeenAt)}`;
+    conn.className = 'conn warn';
+  } else {
+    conn.textContent = '○ 离线';
+    conn.className = 'conn';
+  }
+
+  // ---- 电量 ----
+  const bat = $('#battery');
+  if (bat) {
+    const b = st.battery;
+    if (b && b.voltage != null) {
+      const pct = b.percent == null ? '?' : b.percent;
+      const stale = st.at && Date.now() - st.at > 5 * 60 * 1000;
+      bat.textContent = `🔋 ${pct}% · ${Number(b.voltage).toFixed(2)}V${stale ? '（旧）' : ''}`;
+      bat.className = 'conn bat ' + (pct !== '?' && pct <= 20 ? 'err'
+        : (pct !== '?' && pct <= 40 ? 'warn' : 'ok')) + (stale ? ' stale' : '');
+      bat.title = '0x04 电池电压 × 0.05V 估算，±10%，负载时会偏低';
+    } else {
+      bat.textContent = '🔋 电量 –';
+      bat.className = 'conn bat';
+    }
+  }
+
+  // ---- 缺纸 ----
+  const paper = $('#paper');
+  if (paper) {
+    if (st.paper === true) {
+      paper.textContent = '📄 缺纸';
+      paper.className = 'conn paper err';
+    } else if (st.paper === false) {
+      paper.textContent = '📄 有纸';
+      paper.className = 'conn paper ok';
+    } else {
+      paper.textContent = '📄 纸 未知';
+      paper.className = 'conn paper';
+    }
+    paper.title = '0x06：缺纸时固件只在连接瞬间推送一帧';
+  }
 }
-function stopBatteryTimer() {
-  if (batteryTimer) { clearInterval(batteryTimer); batteryTimer = null; }
+
+function startStatusTimer() {
+  stopStatusTimer();
+  statusTimer = setInterval(updateStatusBar, 30000);
+}
+function stopStatusTimer() {
+  if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
 }
 
 /* ------------------------------------------------- 缺纸自动重打 */

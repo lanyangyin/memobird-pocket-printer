@@ -48,4 +48,4 @@ __all__ = [
     "prepare", "render_text", "dither_to_raw", "raw_to_bmp", "image_to_bmp", "preview",
 ]
 
-__version__ = "1.5.1"
+__version__ = "1.6.0"

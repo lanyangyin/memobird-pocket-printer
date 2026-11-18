@@ -138,6 +138,22 @@ function gt1(style) {
     check('取最近一条电压', b2 && b2.voltage, 3.6);
   }
 
+  // ---- 状态汇总：一次拿到 缺纸 + 电量 + 时间 ----
+  {
+    const mk = (paper, volts) => {
+      const parts = [ble.tlv8(0x06, paper ? 1 : 0), ble.tlv8(0x04, Math.round(volts / 0.05))];
+      const payload = Uint8Array.from(parts.reduce((acc, x) => acc.concat(Array.from(x)), []));
+      return ble.buildFrame(0x0a, payload);
+    };
+    const st = ble.statusFromFrames([mk(false, 4.05)]);
+    check('statusFromFrames 有纸', st && st.paper, false);
+    check('statusFromFrames 电压', st && st.battery.voltage, 4.05);
+    check('statusFromFrames 带时间戳', st && typeof st.at, 'number');
+    const st2 = ble.statusFromFrames([mk(true, 3.8)]);
+    check('statusFromFrames 缺纸', st2 && st2.paper, true);
+    check('空数组返回 null', ble.statusFromFrames([]), null);
+  }
+
   console.log();
   if (fails.length) { console.log(`失败 ${fails.length} 项: ${fails}`); process.exit(1); }
   console.log(`全部通过 ✅（${pass} 项）`);

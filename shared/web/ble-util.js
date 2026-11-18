@@ -154,6 +154,28 @@
    * 从通知帧里找最近一条状态帧，取出电压/电量。
    * @returns {{voltage:number, percent:number}|null}
    */
+  /**
+   * 从通知帧里取最近一条状态：{paper, battery, at}
+   * at 是这条帧到达的本地时间（毫秒），用于判断"数据是否已旧"。
+   */
+  function statusFromFrames(frames) {
+    for (let i = frames.length - 1; i >= 0; i--) {
+      let st = null;
+      try { st = parseStatus(frames[i]); } catch (e) { continue; }
+      if (!st || !st.fields) continue;
+      if (st.cmd !== 0x0a && st.cmd !== 0x01 && st.cmd !== 0x02) continue;
+      const v = batteryVoltage(st);
+      const p = paperOut(st);
+      if (v == null && p == null) continue;
+      return {
+        paper: p,
+        battery: v == null ? null : { voltage: v, percent: batteryPercent(st) },
+        at: Date.now(),
+      };
+    }
+    return null;
+  }
+
   function batteryFromFrames(frames) {
     for (let i = frames.length - 1; i >= 0; i--) {
       let st = null;
@@ -312,6 +334,6 @@
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
-    hexToBytes, bytesToHex, paperFromFrames, batteryFromFrames,
+    hexToBytes, bytesToHex, paperFromFrames, batteryFromFrames, statusFromFrames,
   };
 });

@@ -101,6 +101,10 @@ h1 { font-size: 17px; margin: 0; }
 .conn.bat.warn { color: #e0b341; border-color: #56451a; }
 .conn.bat.ok { color: var(--ok); border-color: #1f4d2b; }
 .conn.bat.err { color: var(--err); border-color: #55242a; }
+.conn.bat.stale { opacity: .65; }
+.conn.paper { margin-left: 8px; }
+.conn.paper.ok { color: var(--ok); border-color: #1f4d2b; }
+.conn.paper.err { color: var(--err); border-color: #55242a; }
 .conn.err { color: var(--err); border-color: #55242a; }
 
 .card {

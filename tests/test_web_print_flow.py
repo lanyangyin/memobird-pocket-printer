@@ -264,15 +264,24 @@ def main() -> int:
         dc = cdp.eval("""(async () => {
           const opts = window.__CAP__.opts || {};
           const hasHook = typeof opts.onDisconnect === 'function';
-          link.state.connected = true;
-          setChip(document.querySelector('#conn'), '已连接 GT1 · 写 ff02', 'ok');
+          const chip = document.querySelector('#conn');
+          chip.textContent = '已连接 GT1 · 写 ff02';   // setChip 不是全局，直接改 DOM
+          chip.className = 'conn ok';
+          const before = chip.textContent;
+          // 真实实现里 ble-link 先置 connected=false 再回调
+          link.state.connected = false;
           if (hasHook) opts.onDisconnect(link.state);
           await new Promise((r) => setTimeout(r, 50));
           const el = document.querySelector('#conn');
-          return { hasHook, text: el.textContent, cls: el.className };
+          const after = el.textContent;
+          const cls = el.className;
+          link.state.connected = true;   // 复原，后面的用例还要打印
+          return { hasHook, before, after, cls };
         })()""")
         check("app 注册了 onDisconnect", dc["hasHook"], True)
-        check("断开后胶囊显示未连接", dc["text"], "未连接")
+        check("断开前胶囊是已连接", "已连接" in (dc["before"] or ""), True)
+        check("断开后胶囊显示离线", "离线" in (dc["after"] or ""), True)
+        check("断开后不再显示已连接", "已连接" not in (dc["after"] or ""), True)
 
         # 5a. 预览也要包含固件固定的 11mm 上下边距（所见即所得）
         prev = cdp.eval("""(async () => {

@@ -12,6 +12,15 @@
 const path = require('path');
 const ble = require(path.join(path.resolve(__dirname, '..'), 'shared', 'web', 'ble-util.js'));
 
+// ble-link.js 依赖 ble-util 的全局 MBBle，先挂上
+global.window = global;
+global.MBBle = ble;
+// Node 20+ 的 navigator 只有 getter，用 defineProperty 覆盖
+Object.defineProperty(global, 'navigator', {
+  value: { bluetooth: {} }, configurable: true, writable: true,
+});
+const link = require(path.join(path.resolve(__dirname, '..'), 'shared', 'web', 'ble-link.js'));
+
 let pass = 0;
 const fails = [];
 
@@ -99,6 +108,14 @@ function gt1(style) {
   check('校验和正确', p.sumOk, true);
   const bad = Buffer.from('aa0500030301000148', 'hex');
   check('错校验和能识别', ble.parseFrame(bad).sumOk, false);
+
+  // ---- link API 导出（曾因漏导出导致"自动重连失败：ensureConnected is not a function"）----
+  {
+    const api = link.createLink({});
+    const mustHave = ['connect', 'disconnect', 'sendJob', 'query', 'sendHex', 'listGatt',
+                      'reconnect', 'ensureConnected', 'getDensity', 'setDensity', 'dumpGatt'];
+    check('link API 导出完整（缺的会列出）', mustHave.filter((k) => typeof api[k] !== 'function'), []);
+  }
 
   console.log();
   if (fails.length) { console.log(`失败 ${fails.length} 项: ${fails}`); process.exit(1); }

@@ -55,12 +55,19 @@ main, body > header { max-width: 720px; margin-left: auto; margin-right: auto; }
     max-width: 1180px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+    grid-template-areas:
+      "controls preview"
+      "log      preview";
+    grid-template-rows: auto auto;
     gap: 16px;
     align-items: start;
+    align-content: start;
   }
-  main > .card:first-child { margin-bottom: 0; }
-  main > .card:last-child { position: sticky; top: 16px; }
-  .preview-wrap { max-height: 74vh; }
+  main > .card:nth-child(1) { grid-area: controls; margin-bottom: 0; }
+  main > #preview-card { grid-area: preview; position: sticky; top: 16px; margin-bottom: 0; }
+  main > #log-card { grid-area: log; margin-bottom: 0; }
+  .preview-wrap { max-height: 70vh; }
+  #log { max-height: 30vh; }
 }
 
 header {

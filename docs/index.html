@@ -64,12 +64,19 @@ main, body > header { max-width: 720px; margin-left: auto; margin-right: auto; }
     max-width: 1180px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+    grid-template-areas:
+      "controls preview"
+      "log      preview";
+    grid-template-rows: auto auto;
     gap: 16px;
     align-items: start;
+    align-content: start;
   }
-  main > .card:first-child { margin-bottom: 0; }
-  main > .card:last-child { position: sticky; top: 16px; }
-  .preview-wrap { max-height: 74vh; }
+  main > .card:nth-child(1) { grid-area: controls; margin-bottom: 0; }
+  main > #preview-card { grid-area: preview; position: sticky; top: 16px; margin-bottom: 0; }
+  main > #log-card { grid-area: log; margin-bottom: 0; }
+  .preview-wrap { max-height: 70vh; }
+  #log { max-height: 30vh; }
 }
 
 header {
@@ -354,11 +361,15 @@ footer {
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="preview-card">
     <div class="preview-head"><h2>预览</h2><span id="meta" class="meta"></span></div>
     <div class="preview-wrap"><img id="preview" alt="预览"></div>
         <p class="meta" id="preview-note">预览说明：图像宽度就是打印头宽度（48mm），实际纸宽 57mm，两侧各约 4.5mm 空白是纸边。</p>
     <div class="progress"><div id="bar"></div></div>
+    </section>
+
+    <section class="card" id="log-card">
+      <div class="preview-head"><h2>日志</h2></div>
     <div class="actions">
       <button id="btn-clear" class="ghost">清空日志</button>
       <button id="btn-copy" class="ghost">复制日志</button>
@@ -965,6 +976,7 @@ footer {
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
+      sendHex, listGatt, reconnect, ensureConnected,
       get connected() { return state.connected; },
     };
   }

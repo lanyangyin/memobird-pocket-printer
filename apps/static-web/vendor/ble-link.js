@@ -303,6 +303,7 @@
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
+      sendHex, listGatt, reconnect, ensureConnected,
       get connected() { return state.connected; },
     };
   }

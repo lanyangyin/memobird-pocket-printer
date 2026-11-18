@@ -177,6 +177,13 @@ async function print(req, label) {
     // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
     // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
     try { await link.query(window.MBBle.COMMIT_FRAME, 400); } catch (e) { /* 忽略 */ }
+
+    // 实测：固件在提交任务（开始打印）时会主动断开 BLE —— 打完立刻重连
+    try {
+      await new Promise((r) => setTimeout(r, 600));
+      if (!link.connected) { await link.ensureConnected(); log('打印后固件断开，已自动重连', 'ok'); }
+    } catch (e) { log('自动重连失败：' + (e.message || e), 'warn'); }
+
     if (i < pages.length - 1) await new Promise((r) => setTimeout(r, 400));
   }
 

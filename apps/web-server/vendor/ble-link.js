@@ -219,6 +219,54 @@
     }
 
 
+
+    /** 连接已建立后：发现服务、挑特征值、订阅通知 */
+    async function setupFromServer(server) {
+      const services = await servicesWithFallback(server);
+      const picked = await BLE.pickWrite(services);
+      state.serviceCount = services.length;
+      state.charCount = picked.all.length;
+      emit(`读到 ${services.length} 个服务 / ${picked.all.length} 个特征值`);
+
+      state.writeChr = picked.write;
+      state.notifyChr = picked.notify;
+      if (!state.writeChr) throw new Error(picked.reason || '没找到可写特征值');
+      emit(`写入特征值：${state.writeChr.uuid}`, 'ok');
+
+      if (state.notifyChr) {
+        try {
+          await state.notifyChr.startNotifications();
+          state.notifyChr.addEventListener('characteristicvaluechanged', (e) => {
+            const dv = e.target.value;
+            const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+            state.lastNotify = bytes;
+            if (opts.onNotify) opts.onNotify(bytes);
+          });
+        } catch (e) { emit('订阅通知失败：' + (e.message || e), 'warn'); }
+      }
+      state.connected = true;
+      return state;
+    }
+
+    /**
+     * 重连（不需要再弹选择框）。
+     * 实测：固件在"提交打印任务"时会主动断开 BLE，所以每次打印后都要重连。
+     */
+    async function reconnect() {
+      if (!state.device) throw new Error('还没选过设备，先点「连接打印机」');
+      emit('打印后固件会断开，正在重连…');
+      state.server = await state.device.gatt.connect();
+      await setupFromServer(state.server);
+      emit('已重连', 'ok');
+      return state;
+    }
+
+    /** 需要时确保连接可用（断了就重连一次） */
+    async function ensureConnected() {
+      if (state.connected) return state;
+      return reconnect();
+    }
+
     /** 读当前打印浓度（tag 0x02），读不到返回 null */
     async function getDensity() {
       const infos = await readDeviceInfo(1200);

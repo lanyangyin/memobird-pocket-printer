@@ -18,6 +18,21 @@
   </div>
   <button id="btn-connect" class="primary">连接打印机</button>
         <button id="btn-disconnect" class="ghost">断开</button>
+        <label>浓度
+          <select id="density">
+          <option value="0">跟随设备当前值</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10" selected>10</option>
+        </select>
+        </label>
 </header>
 
 <div id="conn" class="conn">未连接</div>
@@ -103,21 +118,6 @@
         <label>走纸 <input id="feed-mm" type="number" value="18" min="18" max="500" step="1"> mm</label>
         <label>打后走纸 <input id="feed-lines" type="number" value="0" min="0" max="8" step="1"> 行</label>
         <label>纸总长 <input id="total-mm" type="number" min="20" max="500" step="1" placeholder="留空=不限"> mm</label>
-        <label>浓度
-          <select id="density">
-          <option value="0">跟随设备当前值</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-          <option value="8">8</option>
-          <option value="9">9</option>
-          <option value="10" selected>10</option>
-        </select>
-        </label>
       </div>
       <div class="actions">
         <button id="btn-feed" class="ghost">走纸</button>

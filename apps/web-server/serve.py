@@ -46,7 +46,7 @@ from memobird_printer.image import (                     # noqa: E402
 )
 
 WEB_DIR = HERE
-VERSION = "2.3.1"
+VERSION = "2.3.2"
 
 MIME = {
     ".html": "text/html; charset=utf-8",

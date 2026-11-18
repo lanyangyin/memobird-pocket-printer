@@ -118,13 +118,13 @@ def req(method, path, body=None, headers=None):
 code, body = req("POST", "/print", {"text": "density test", "density": 7})
 check("density 参数被接受（fake 下忽略）", code == 200 and body.get("ok") is True, str(code))
 
-# 收尾：默认只发提交帧，不额外走纸
+# 收尾：默认发状态帧 0x01（触发打印且不断连），不额外走纸
 frames, meta = ps.build_frames({"text": "Hello"})
-check("文字默认以提交帧收尾", frames[-1].hex(), "aa0100084d")
+check("文字默认以状态帧收尾", frames[-1].hex(), "aa01000154")
 check("文字默认没有走纸帧", all(b"\n\n" not in f for f in frames), "no-feed")
 
 frames2, _ = ps.build_frames({"text": "Hello", "feed": True, "feedLines": 2})
-check("显式 feed 才附走纸帧", frames2[-1].hex() != "aa0100084d", frames2[-1].hex()[:12])
+check("显式 feed 才附走纸帧", frames2[-1].hex() != "aa01000154", frames2[-1].hex()[:12])
 check("显式 feed 行数可控", len(frames2) == len(frames) , str(len(frames2)))
 
 import base64 as _b64
@@ -134,7 +134,7 @@ _buf = _io.BytesIO()
 _Image.new("L", (384, 40), 255).save(_buf, "PNG")
 _img_b64 = _b64.b64encode(_buf.getvalue()).decode()
 frames3, _ = ps.build_frames({"image": _img_b64})
-check("图片默认以提交帧收尾", frames3[-1].hex(), "aa0100084d")
+check("图片默认以状态帧收尾", frames3[-1].hex(), "aa01000154")
 
 # 底层接口在 fake 后端应明确拒绝（而不是假装成功）
 for path, payload in (("/raw", {"hex": "aa01000154"}), ("/cmd", {"cmd": "0x08"})):

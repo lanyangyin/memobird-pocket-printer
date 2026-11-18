@@ -290,7 +290,7 @@ class BlePrinter:
         await self.send_frames(job.frames, preheat=True)
 
     async def print_raw_image(self, raw: bytes, *, preheat: bool = True,
-                              terminator: str = "commit", feed_lines: int = 0) -> None:
+                              terminator: str = "status", feed_lines: int = 0) -> None:
         """打印 1bpp 裸位图。
 
         图片帧本身没有"结束标记"，实测不补一帧固件不会真正出纸。

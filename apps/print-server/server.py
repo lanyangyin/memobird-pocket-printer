@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 
@@ -102,8 +102,11 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
                 _want_feed = (req.get("terminator") == "feed") or feed
                 if _want_feed:
                     frames += packet.feed_job(int(req.get("feedLines") or 3)).frames
-                else:
+                elif (req.get("terminator") or "status") == "commit":
                     frames.append(packet.commit_frame())
+                else:
+                    from memobird_printer import device as _dev
+                    frames.append(_dev.status_frame())
                 return frames, {"format": "gbk", "chunks": job.chunks,
                                 "bytes": job.total_bytes, "preheat": packet.PREHEAT,
                                 "width": 384, "height": 0}
@@ -138,12 +141,15 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
     bmp = raw_to_bmp(w, h, raw, official=True, top_down=not req.get("vflip"))
     job = packet.build_bmp_job(bmp, chunk=int(req.get("bmpChunk") or 1024))
     frames = list(job.frames)
-    # 收尾：**默认只发提交帧，不额外走纸**；要留白才显式 feed
+    # 收尾：默认发 **状态帧 0x01** —— 触发打印且不断连；要留白才显式 feed
     _want_feed = (req.get("terminator") == "feed") or feed
     if _want_feed:
         frames += packet.feed_job(int(req.get("feedLines") or 3)).frames
-    else:
+    elif (req.get("terminator") or "status") == "commit":
         frames.append(packet.commit_frame())
+    else:
+        from memobird_printer import device as _dev
+        frames.append(_dev.status_frame())
     return frames, {"format": "bmp", "chunks": job.chunks, "bytes": len(bmp),
                     "preheat": packet.PREHEAT, "width": w, "height": h}
 

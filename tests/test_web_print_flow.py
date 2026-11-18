@@ -240,7 +240,7 @@ def main() -> int:
         settings = json.loads(cdp.eval("JSON.stringify(window.__CAP__.settings)"))
         check("浓度：先设 6 再恢复 10", settings, [6, 10])
         queries = json.loads(cdp.eval("JSON.stringify(window.__CAP__.queries)"))
-        check("终结帧是提交帧 cmd 0x08", queries, ["aa0100084d"])
+        check("收尾帧是状态帧 cmd 0x01（不断连）", queries, ["aa01000154"])
 
         # 5a. 预览也要包含固件固定的 11mm 上下边距（所见即所得）
         prev = cdp.eval("""(async () => {

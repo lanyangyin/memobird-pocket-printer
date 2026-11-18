@@ -288,13 +288,18 @@ def cmd_print(args) -> int:
                             await b.transact(packet.commit_frame(), wait=0.6, retries=1)
 
                     # 终结帧：让固件把位图真正打出来（不驱动电机 ⇒ 不多走纸）
-                    term = getattr(args, "terminator", "commit")
+                    term = getattr(args, "terminator", "status")
                     if term == "feed":
                         await asyncio.sleep(0.3)
                         await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
-                    else:
+                    elif term == "commit":
+                        # cmd 0x08：能打印，但固件随即断开连接
                         await asyncio.sleep(0.2)
                         await b.transact(packet.commit_frame(), wait=0.6, retries=1)
+                    else:
+                        # cmd 0x01（默认）：触发打印且连接保持
+                        await asyncio.sleep(0.15)
+                        await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.4, retries=1)
 
 
               finally:
@@ -663,7 +668,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
         p.add_argument("--inter-frame", type=float, default=0.03,
                        help="帧间固定间隔（秒）；0.2~0.4 可让出纸连续又不丢数据")
-        p.add_argument("--terminator", default="commit", choices=["commit", "feed"],
+        p.add_argument("--terminator", default="status", choices=["status", "commit", "feed"],
                        help="收尾方式：commit=提交帧(默认) / feed=再走 N 行空白")
         return p
 

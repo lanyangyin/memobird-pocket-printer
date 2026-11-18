@@ -21,6 +21,31 @@ body {
   padding: 0 12px 32px;
 }
 
+.top-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.top-actions button, .top-actions label { white-space: nowrap; }
+button { white-space: nowrap; }
+
+@media (max-width: 620px) {
+  header { flex-wrap: wrap; row-gap: 10px; }
+  .brand { flex: 1 1 100%; }
+  .top-actions { flex: 1 1 100%; justify-content: space-between; }
+  .actions > button { flex: 1 1 calc(50% - 8px); min-width: 0; }
+  /* 标签文字保持一行，输入框吃掉剩余宽度（避免"走纸"竖排） */
+  .row label { flex: 1 1 100%; white-space: nowrap; }
+  /* 只让"文本类"输入框吃剩余宽度；checkbox/radio 保持原尺寸 */
+  .row input:not([type=checkbox]):not([type=radio]),
+  .row select { flex: 1 1 auto; min-width: 0; width: auto; }
+  .row input[type=checkbox], .row input[type=radio] { flex: 0 0 auto; width: auto; }
+  .chk { white-space: nowrap; justify-content: flex-start; }
+  textarea, pre { font-size: 12px; }
+}
+
+/* 宽屏别无限拉伸：内容居中，最大 720px（和手机观感一致） */
+main, body > header { max-width: 720px; margin-left: auto; margin-right: auto; }
+
 header {
   display: flex;
   align-items: center;
@@ -86,7 +111,8 @@ textarea { resize: vertical; min-height: 110px; margin-bottom: 10px; }
 
 input[type=range] { width: 130px; accent-color: var(--acc); }
 
-.actions { display: flex; gap: 8px; margin-top: 12px; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.actions > button { flex: 1 1 auto; min-width: 116px; }
 
 button {
   border: 1px solid var(--line);
@@ -108,11 +134,18 @@ button:active { transform: scale(.98); }
 h2 { font-size: 14px; margin: 0 0 8px; color: var(--dim); font-weight: 600; }
 .meta { font-size: 11px; color: var(--dim); }
 
+/* 预览：白底只包住纸本身，不再撑满整行（否则两侧看起来是"留白边"） */
 .preview-wrap {
-  background: #fff; border-radius: 10px; padding: 6px;
-  min-height: 60px; display: grid; place-items: center; overflow: hidden;
+  background: transparent; padding: 0; margin: 0 auto;
+  min-height: 40px; display: flex; justify-content: center;
+  max-height: 62vh; overflow: auto;
 }
-.preview-wrap img { max-width: 100%; display: block; image-rendering: pixelated; }
+.preview-wrap img {
+  display: block; width: 100%; max-width: 100%; image-rendering: pixelated;
+  background: #fff;                      /* 纸面 */
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0,0,0,.35);
+}
 
 .progress { height: 4px; background: var(--card2); border-radius: 2px; margin: 12px 0 0; overflow: hidden; }
 #bar { height: 100%; width: 0; background: var(--acc); transition: width .1s linear; }

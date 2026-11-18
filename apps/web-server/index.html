@@ -33,7 +33,8 @@
           <option value="10" selected>10</option>
         </select>
         </label>
-</header>
+    </div>
+  </header>
 
 <div id="conn" class="conn">未连接</div>
 
@@ -120,7 +121,9 @@
         <button id="btn-led-on" class="ghost">开灯</button>
         <button id="btn-led-off" class="ghost">关灯</button>
         <button id="btn-device" class="ghost">读设备信息</button>
-      <h3>底层操作</h3>
+        </div>
+
+        <h3>底层操作</h3>
       <textarea id="raw-hex" rows="2" placeholder="任意帧，如 aa 01 00 01 54（读状态）"></textarea>
       <div class="actions">
         <button id="btn-raw" class="ghost">发送帧</button>
@@ -133,7 +136,8 @@
         <button id="btn-cmd" class="ghost">发命令</button>
       </div>
       <pre id="raw-out"></pre>
-        <button id="btn-gatt" class="ghost">探测 GATT</button>
+        <div class="actions">
+          <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
       </div>
       <pre id="dev-out" class="log small"></pre>
@@ -144,6 +148,7 @@
   <section class="card">
     <div class="preview-head"><h2>预览</h2><span id="meta" class="meta"></span></div>
     <div class="preview-wrap"><img id="preview" alt="预览"></div>
+        <p class="meta" id="preview-note">预览说明：图像宽度就是打印头宽度（48mm），实际纸宽 57mm，两侧各约 4.5mm 空白是纸边。</p>
     <div class="progress"><div id="bar"></div></div>
     <div class="actions">
       <button id="btn-clear" class="ghost">清空日志</button>

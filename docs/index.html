@@ -30,6 +30,31 @@ body {
   padding: 0 12px 32px;
 }
 
+.top-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.top-actions button, .top-actions label { white-space: nowrap; }
+button { white-space: nowrap; }
+
+@media (max-width: 620px) {
+  header { flex-wrap: wrap; row-gap: 10px; }
+  .brand { flex: 1 1 100%; }
+  .top-actions { flex: 1 1 100%; justify-content: space-between; }
+  .actions > button { flex: 1 1 calc(50% - 8px); min-width: 0; }
+  /* 标签文字保持一行，输入框吃掉剩余宽度（避免"走纸"竖排） */
+  .row label { flex: 1 1 100%; white-space: nowrap; }
+  /* 只让"文本类"输入框吃剩余宽度；checkbox/radio 保持原尺寸 */
+  .row input:not([type=checkbox]):not([type=radio]),
+  .row select { flex: 1 1 auto; min-width: 0; width: auto; }
+  .row input[type=checkbox], .row input[type=radio] { flex: 0 0 auto; width: auto; }
+  .chk { white-space: nowrap; justify-content: flex-start; }
+  textarea, pre { font-size: 12px; }
+}
+
+/* 宽屏别无限拉伸：内容居中，最大 720px（和手机观感一致） */
+main, body > header { max-width: 720px; margin-left: auto; margin-right: auto; }
+
 header {
   display: flex;
   align-items: center;
@@ -95,7 +120,8 @@ textarea { resize: vertical; min-height: 110px; margin-bottom: 10px; }
 
 input[type=range] { width: 130px; accent-color: var(--acc); }
 
-.actions { display: flex; gap: 8px; margin-top: 12px; }
+.actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.actions > button { flex: 1 1 auto; min-width: 116px; }
 
 button {
   border: 1px solid var(--line);
@@ -117,11 +143,18 @@ button:active { transform: scale(.98); }
 h2 { font-size: 14px; margin: 0 0 8px; color: var(--dim); font-weight: 600; }
 .meta { font-size: 11px; color: var(--dim); }
 
+/* 预览：白底只包住纸本身，不再撑满整行（否则两侧看起来是"留白边"） */
 .preview-wrap {
-  background: #fff; border-radius: 10px; padding: 6px;
-  min-height: 60px; display: grid; place-items: center; overflow: hidden;
+  background: transparent; padding: 0; margin: 0 auto;
+  min-height: 40px; display: flex; justify-content: center;
+  max-height: 62vh; overflow: auto;
 }
-.preview-wrap img { max-width: 100%; display: block; image-rendering: pixelated; }
+.preview-wrap img {
+  display: block; width: 100%; max-width: 100%; image-rendering: pixelated;
+  background: #fff;                      /* 纸面 */
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0,0,0,.35);
+}
 
 .progress { height: 4px; background: var(--card2); border-radius: 2px; margin: 12px 0 0; overflow: hidden; }
 #bar { height: 100%; width: 0; background: var(--acc); transition: width .1s linear; }
@@ -180,7 +213,8 @@ footer {
           <option value="10" selected>10</option>
         </select>
         </label>
-</header>
+    </div>
+  </header>
 
 <div id="conn" class="conn">未连接</div>
 
@@ -273,7 +307,9 @@ footer {
         <button id="btn-led-on" class="ghost">开灯</button>
         <button id="btn-led-off" class="ghost">关灯</button>
         <button id="btn-device" class="ghost">读设备信息</button>
-      <h3>底层操作</h3>
+        </div>
+
+        <h3>底层操作</h3>
       <textarea id="raw-hex" rows="2" placeholder="任意帧，如 aa 01 00 01 54（读状态）"></textarea>
       <div class="actions">
         <button id="btn-raw" class="ghost">发送帧</button>
@@ -286,7 +322,8 @@ footer {
         <button id="btn-cmd" class="ghost">发命令</button>
       </div>
       <pre id="raw-out"></pre>
-        <button id="btn-gatt" class="ghost">探测 GATT</button>
+        <div class="actions">
+          <button id="btn-gatt" class="ghost">探测 GATT</button>
         <button id="btn-status" class="ghost">查询状态</button>
       </div>
       <pre id="dev-out" class="log small"></pre>
@@ -297,6 +334,7 @@ footer {
   <section class="card">
     <div class="preview-head"><h2>预览</h2><span id="meta" class="meta"></span></div>
     <div class="preview-wrap"><img id="preview" alt="预览"></div>
+        <p class="meta" id="preview-note">预览说明：图像宽度就是打印头宽度（48mm），实际纸宽 57mm，两侧各约 4.5mm 空白是纸边。</p>
     <div class="progress"><div id="bar"></div></div>
     <div class="actions">
       <button id="btn-clear" class="ghost">清空日志</button>

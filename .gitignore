@@ -51,3 +51,7 @@ test400.png
 tiny24.png
 top0.png
 rows[0-9]*.png
+
+# ---- 预览/UI 截图（本地检查用）----
+preview_shot*.png
+ui_mobile_*.png

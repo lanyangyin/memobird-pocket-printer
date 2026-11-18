@@ -312,6 +312,11 @@
       return BLE.paperFromFrames(notifications);
     }
 
+    /** 最近一次状态帧里的电压/电量（缺纸时也能拿到，因为固件会推送） */
+    function lastBattery() {
+      return BLE.batteryFromFrames(notifications);
+    }
+
     /** 读当前打印浓度（tag 0x02），读不到返回 null */
     async function getDensity() {
       const infos = await readDeviceInfo(1200);
@@ -348,7 +353,7 @@
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
-      sendHex, listGatt, reconnect, ensureConnected, lastPaperOut,
+      sendHex, listGatt, reconnect, ensureConnected, lastPaperOut, lastBattery,
       waitJobAck,
       get connected() { return state.connected; },
     };

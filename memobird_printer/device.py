@@ -260,6 +260,21 @@ async def read_info(link, *, detail: bool = True, wait: float = 2.0,
     return []
 
 
+def battery_from_notifies(frames) -> dict | None:
+    """从一组通知帧里找最近一条状态帧的电池电压/估算电量。"""
+    for f in reversed(list(frames)):
+        info = parse_status(f)
+        if not info:
+            continue
+        if info.cmd not in (CMD_STATUS_DETAIL, CMD_STATUS, CMD_STATUS_PUSH):
+            continue
+        v = battery_voltage(info)
+        if v is None:
+            continue
+        return {"voltage": v, "percent": battery_percent(info)}
+    return None
+
+
 def paper_out_from_notifies(frames, *, max_age: int | None = None) -> bool | None:
     """从一组通知帧里找最近的一条状态（含设备主动推的 0x0A），返回缺纸标志。"""
     for f in reversed(list(frames)):

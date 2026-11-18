@@ -226,6 +226,8 @@ $('#btn-connect').addEventListener('click', async () => {
     await link.connect();
     setChip($('#conn'), `已连接 ${link.state.device.name || link.state.device.id} · 写 ${link.state.writeChr.uuid.slice(4, 8)}`, 'ok');
     keepAwake(true);
+    updateBattery();
+    startBatteryTimer();
   } catch (e) {
     log('连接失败：' + (e.message || e), 'err');
     setChip($('#conn'), '未连接', 'err');
@@ -242,6 +244,8 @@ $('#btn-disconnect').addEventListener('click', () => {
   try {
     link.disconnect();
     setChip($('#conn'), '未连接', 'warn');
+    updateBattery();
+    stopBatteryTimer();
     log('已断开（打印机已释放，官方 App / 其它设备可以连了）', 'ok');
   } catch (e) { log('断开失败：' + (e.message || e), 'err'); }
 });
@@ -373,6 +377,32 @@ async function toggleLed(on) {
     log(`缺纸自动重打：${el.checked ? '开' : '关'}`, 'ok');
   });
 })();
+
+/* ------------------------------------------------- 电量（独立显示） */
+function updateBattery() {
+  const el = $('#battery');
+  if (!el) return;
+  const b = link.lastBattery ? link.lastBattery() : null;
+  if (!b || b.voltage == null) {
+    el.textContent = link.connected ? '电量 未知' : '电量 –';
+    el.className = 'conn bat';
+    return;
+  }
+  const pct = b.percent == null ? '?' : b.percent;
+  el.textContent = `电量 ${pct}% · ${b.voltage.toFixed(2)}V`;
+  el.className = 'conn bat' + (pct !== '?' && pct <= 20 ? ' err' : (pct !== '?' && pct <= 40 ? ' warn' : ' ok'));
+  el.title = '0x04 电池电压 × 0.05V 估算，±10%，负载时会偏低';
+}
+
+/* 电量定时刷新（60 秒）：只读已收到的推送，不额外连设备 */
+let batteryTimer = null;
+function startBatteryTimer() {
+  stopBatteryTimer();
+  batteryTimer = setInterval(updateBattery, 60000);
+}
+function stopBatteryTimer() {
+  if (batteryTimer) { clearInterval(batteryTimer); batteryTimer = null; }
+}
 
 /* ------------------------------------------------- 缺纸自动重打 */
 function autoReprintEnabled() {

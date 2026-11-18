@@ -150,6 +150,21 @@
    * 缺纸时固件只推送、不回应查询，所以判定必须走这里。
    * @returns {boolean|null} true=缺纸 / false=有纸 / null=没有状态帧
    */
+  /**
+   * 从通知帧里找最近一条状态帧，取出电压/电量。
+   * @returns {{voltage:number, percent:number}|null}
+   */
+  function batteryFromFrames(frames) {
+    for (let i = frames.length - 1; i >= 0; i--) {
+      let st = null;
+      try { st = parseStatus(frames[i]); } catch (e) { continue; }
+      if (!st || !st.fields) continue;
+      const v = batteryVoltage(st);
+      if (v != null) return { voltage: v, percent: batteryPercent(st) };
+    }
+    return null;
+  }
+
   function paperFromFrames(frames) {
     for (let i = frames.length - 1; i >= 0; i--) {
       let p = null;
@@ -297,6 +312,6 @@
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
-    hexToBytes, bytesToHex, paperFromFrames,
+    hexToBytes, bytesToHex, paperFromFrames, batteryFromFrames,
   };
 });

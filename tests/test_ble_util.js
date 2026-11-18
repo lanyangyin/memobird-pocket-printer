@@ -127,6 +127,17 @@ function gt1(style) {
     check('非状态帧被忽略', ble.paperFromFrames([ble.buildFrame(0x04, ble.tlv8(0x0b, 1))]), null);
   }
 
+  // ---- 电量：也要能从推送里读（0x04 × 0.05V）----
+  {
+    const mk = (volts) => ble.buildFrame(0x0a, ble.tlv8(0x04, Math.round(volts / 0.05)));
+    const b1 = ble.batteryFromFrames([mk(4.05)]);
+    check('从推送读电压', b1 && b1.voltage, 4.05);
+    check('电压能换算出电量', typeof (b1 || {}).percent, 'number');
+    check('没有状态帧返回 null', ble.batteryFromFrames([]), null);
+    const b2 = ble.batteryFromFrames([mk(4.05), mk(3.60)]);
+    check('取最近一条电压', b2 && b2.voltage, 3.6);
+  }
+
   console.log();
   if (fails.length) { console.log(`失败 ${fails.length} 项: ${fails}`); process.exit(1); }
   console.log(`全部通过 ✅（${pass} 项）`);

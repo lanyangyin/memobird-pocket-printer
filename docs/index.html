@@ -106,6 +106,10 @@ h1 { font-size: 17px; margin: 0; }
 }
 .conn:empty { display: none; }
 .conn.ok { color: var(--ok); border-color: #1f4d2b; }
+.conn.bat { margin-left: 8px; font-variant-numeric: tabular-nums; }
+.conn.bat.warn { color: #e0b341; border-color: #56451a; }
+.conn.bat.ok { color: var(--ok); border-color: #1f4d2b; }
+.conn.bat.err { color: var(--err); border-color: #55242a; }
 .conn.err { color: var(--err); border-color: #55242a; }
 
 .card {
@@ -226,7 +230,7 @@ footer {
   <div class="brand">
     <span class="logo">MB</span>
     <div>
-      <h1>口袋打印机控制台 <small class="ver">v1.4.0</small></h1>
+      <h1>口袋打印机控制台 <small class="ver">v1.5.0</small></h1>
       <p class="sub">实现 1｜纯静态网页（零后端）</p>
     </div>
   </div>
@@ -252,6 +256,7 @@ footer {
   </header>
 
 <div id="conn" class="conn">未连接</div>
+  <div id="battery" class="conn bat">电量 –</div>
 
 <main>
   <section class="card">
@@ -546,6 +551,21 @@ footer {
    * 缺纸时固件只推送、不回应查询，所以判定必须走这里。
    * @returns {boolean|null} true=缺纸 / false=有纸 / null=没有状态帧
    */
+  /**
+   * 从通知帧里找最近一条状态帧，取出电压/电量。
+   * @returns {{voltage:number, percent:number}|null}
+   */
+  function batteryFromFrames(frames) {
+    for (let i = frames.length - 1; i >= 0; i--) {
+      let st = null;
+      try { st = parseStatus(frames[i]); } catch (e) { continue; }
+      if (!st || !st.fields) continue;
+      const v = batteryVoltage(st);
+      if (v != null) return { voltage: v, percent: batteryPercent(st) };
+    }
+    return null;
+  }
+
   function paperFromFrames(frames) {
     for (let i = frames.length - 1; i >= 0; i--) {
       let p = null;
@@ -693,7 +713,7 @@ footer {
     // 设备信息（cmd 0x01/0x09）与控制（cmd 0x03）
     DEVICE_TAGS, STATUS_FRAME, SERIAL_FRAME, COMMIT_FRAME, parseStatus, formatStatus, paperOut, batteryVoltage, batteryPercent,
     buildFrame, tlv8, settingFrame, LED_ON_FRAME, LED_OFF_FRAME,
-    hexToBytes, bytesToHex, paperFromFrames,
+    hexToBytes, bytesToHex, paperFromFrames, batteryFromFrames,
   };
 });
 
@@ -1012,6 +1032,11 @@ footer {
       return BLE.paperFromFrames(notifications);
     }
 
+    /** 最近一次状态帧里的电压/电量（缺纸时也能拿到，因为固件会推送） */
+    function lastBattery() {
+      return BLE.batteryFromFrames(notifications);
+    }
+
     /** 读当前打印浓度（tag 0x02），读不到返回 null */
     async function getDensity() {
       const infos = await readDeviceInfo(1200);
@@ -1048,7 +1073,7 @@ footer {
     return {
       state, connect, disconnect, writeAll, sendJob, dumpGatt,
       servicesWithFallback, query, readDeviceInfo, setLed, getDensity, setDensity,
-      sendHex, listGatt, reconnect, ensureConnected, lastPaperOut,
+      sendHex, listGatt, reconnect, ensureConnected, lastPaperOut, lastBattery,
       waitJobAck,
       get connected() { return state.connected; },
     };
@@ -1879,7 +1904,7 @@ footer {
 const { $, createLogger, initTabs, setChip, setProgress, copyText, keepAwake } = window.MBUI;
 const E = window.MBEncoder;
 const R = window.MBRender;
-const APP_VERSION = '1.4.0';   // 构建时注入
+const APP_VERSION = '1.5.0';   // 构建时注入
 
 const log = createLogger($('#log'));
 const link = window.MBLink.createLink({ log });
@@ -2097,6 +2122,8 @@ $('#btn-connect').addEventListener('click', async () => {
     await link.connect();
     setChip($('#conn'), `已连接 ${link.state.device.name || link.state.device.id} · 写 ${link.state.writeChr.uuid.slice(4, 8)}`, 'ok');
     keepAwake(true);
+    updateBattery();
+    startBatteryTimer();
   } catch (e) {
     log('连接失败：' + (e.message || e), 'err');
     setChip($('#conn'), '未连接', 'err');
@@ -2113,6 +2140,8 @@ $('#btn-disconnect').addEventListener('click', () => {
   try {
     link.disconnect();
     setChip($('#conn'), '未连接', 'warn');
+    updateBattery();
+    stopBatteryTimer();
     log('已断开（打印机已释放，官方 App / 其它设备可以连了）', 'ok');
   } catch (e) { log('断开失败：' + (e.message || e), 'err'); }
 });
@@ -2244,6 +2273,32 @@ async function toggleLed(on) {
     log(`缺纸自动重打：${el.checked ? '开' : '关'}`, 'ok');
   });
 })();
+
+/* ------------------------------------------------- 电量（独立显示） */
+function updateBattery() {
+  const el = $('#battery');
+  if (!el) return;
+  const b = link.lastBattery ? link.lastBattery() : null;
+  if (!b || b.voltage == null) {
+    el.textContent = link.connected ? '电量 未知' : '电量 –';
+    el.className = 'conn bat';
+    return;
+  }
+  const pct = b.percent == null ? '?' : b.percent;
+  el.textContent = `电量 ${pct}% · ${b.voltage.toFixed(2)}V`;
+  el.className = 'conn bat' + (pct !== '?' && pct <= 20 ? ' err' : (pct !== '?' && pct <= 40 ? ' warn' : ' ok'));
+  el.title = '0x04 电池电压 × 0.05V 估算，±10%，负载时会偏低';
+}
+
+/* 电量定时刷新（60 秒）：只读已收到的推送，不额外连设备 */
+let batteryTimer = null;
+function startBatteryTimer() {
+  stopBatteryTimer();
+  batteryTimer = setInterval(updateBattery, 60000);
+}
+function stopBatteryTimer() {
+  if (batteryTimer) { clearInterval(batteryTimer); batteryTimer = null; }
+}
 
 /* ------------------------------------------------- 缺纸自动重打 */
 function autoReprintEnabled() {

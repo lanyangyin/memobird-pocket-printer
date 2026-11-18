@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 # 缺纸自动重打（可在 /settings 里改，持久化到 settings.json）
 DEFAULT_SETTINGS = {
@@ -225,6 +225,16 @@ class BleWorker:
                     pass
             # 顺带看固件在这期间推来的状态帧（0x0A）里有没有"缺纸"
             await asyncio.sleep(0.3)
+            self.last_push_battery = _dev.battery_from_notifies(dev._notifies)
+            if self.last_push_battery is None and dev.initial_paper is not None:
+                # 初始帧里也带电压
+                infos0 = [i for i in (_dev.parse_status(f) for f in list(dev._notifies))
+                          if i]
+                if infos0:
+                    v = _dev.battery_voltage(infos0[-1])
+                    if v is not None:
+                        self.last_push_battery = {"voltage": v,
+                                                  "percent": _dev.battery_percent(infos0[-1])}
             self.last_push_paper = _dev.paper_out_from_notifies(dev._notifies)
             if self.last_push_paper is None:
                 # 缺纸时固件只在连接瞬间推一帧，之后不回应查询
@@ -304,6 +314,7 @@ class BleWorker:
             return await dev.paper_state()
 
     last_push_paper: bool | None = None
+    last_push_battery: dict | None = None
     last_push_paper_at: str | None = None
 
     def paper_state(self, timeout: float = 30) -> bool | None:
@@ -372,6 +383,7 @@ class PrintService:
         self._settings = self.load_settings()
         self.pending_reprint: dict | None = None
         self._last_paper: dict | None = None
+        self._last_battery: dict | None = None
         self.last_job: dict | None = None      # 最近一次成功打印（供复查缺纸）      # 缺纸后等着重打的那一单
         self._monitor_stop = threading.Event()
         self._monitor: threading.Thread | None = None
@@ -411,6 +423,16 @@ class PrintService:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:                                      # noqa: BLE001
             pass
+
+    def remember_battery(self, batt: dict | None) -> None:
+        """记住最后已知电量（写进 settings，重启也能看）"""
+        if not batt:
+            return
+        self._last_battery = batt
+        cfg = dict(self._settings)
+        cfg["lastBattery"] = batt
+        self._settings = cfg
+        self.save_settings(cfg)
 
     def remember_paper(self, paper, when: str | None = None) -> None:
         """把"最后已知缺纸状态"存下来（写进 settings 文件，重启也能看）"""
@@ -578,6 +600,7 @@ class PrintService:
             pushed = getattr(self.worker, "last_push_paper", None)
             if pushed is not None:
                 self.remember_paper(pushed)
+            self.remember_battery(getattr(self.worker, "last_push_battery", None))
 
             if self._settings.get("autoReprint", True):
                 if pushed is True:
@@ -626,6 +649,7 @@ class PrintService:
                 "paperOut", getattr(getattr(self, "worker", None), "last_push_paper", None)),
             "paperOutLastKnownAt": (self._last_paper or {}).get(
                 "at", getattr(getattr(self, "worker", None), "last_push_paper_at", None)),
+            "battery": self._last_battery or self._settings.get("lastBattery"),
             "pendingReprint": self.pending_reprint,
             "settings": self.settings(),
         }
@@ -647,6 +671,9 @@ class PrintService:
         with self.lock:
             infos, paper = self.worker.read_info()
         self.last_paper_out = paper
+        if infos:
+            batt = infos[-1].get("battery") if isinstance(infos[-1], dict) else None
+            self.remember_battery(batt)
         return {"ok": True, "backend": self.backend, "target": self.target,
                 "paper_out": paper, "battery": self._battery(),
                 "device": infos[-1] if infos else None}
@@ -891,37 +918,103 @@ class JobQueue:
 INDEX = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>打印服务</title><style>
-body{background:#0e1116;color:#e6edf3;font:15px/1.6 -apple-system,"Microsoft YaHei",sans-serif;
-     max-width:640px;margin:0 auto;padding:20px}
-textarea,input,select{width:100%;background:#0d1117;color:#e6edf3;border:1px solid #2a323d;
+:root{--bg:#0e1116;--card:#161b22;--line:#2a323d;--fg:#e6edf3;--dim:#8b949e;--acc:#2f81f7;--ok:#3fb950;--warn:#d29922;--err:#f85149}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Microsoft YaHei",sans-serif;
+     max-width:680px;margin:0 auto;padding:20px}
+h2{margin:0 0 4px;font-size:18px} h2 small{color:var(--dim);font-weight:400;font-size:12px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 16px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--dim)}
+.chip.ok{color:var(--ok);border-color:#1f4d2b}
+.chip.warn{color:var(--warn);border-color:#56451a}
+.chip.err{color:var(--err);border-color:#55242a}
+textarea,input,select{width:100%;background:#0d1117;color:var(--fg);border:1px solid var(--line);
      border-radius:10px;padding:10px;font:inherit;margin:6px 0 12px}
-button{background:#2f81f7;border:0;color:#fff;padding:12px 18px;border-radius:10px;
+button{background:var(--acc);border:0;color:#fff;padding:12px 18px;border-radius:10px;
      font:inherit;font-weight:600;width:100%}
-pre{background:#0b0e13;border:1px solid #2a323d;border-radius:10px;padding:12px;
+button.ghost{background:var(--card);border:1px solid var(--line);color:var(--fg)}
+pre{background:#0b0e13;border:1px solid var(--line);border-radius:10px;padding:12px;
     font-size:12px;white-space:pre-wrap;max-height:300px;overflow:auto}
 .row{display:flex;gap:10px}.row>*{flex:1}
 </style></head><body>
 <h2>打印服务 <small>__VER__ / __BACKEND__</small></h2>
+
+<div class="chips">
+  <span id="bat" class="chip">电量 –</span>
+  <span id="paper" class="chip">缺纸 –</span>
+  <span id="queue" class="chip">队列 –</span>
+</div>
+
 <textarea id="t" rows="5">服务器磁盘 85%，请清理</textarea>
 <div class="row">
-  <select id="darken"><option value="0">标准</option><option value="1">加深</option>
-  <option value="2">更黑</option><option value="3">最黑</option></select>
-  <select id="fs"><option value="26">默认字号</option><option value="34">大</option>
-  <option value="42">更大</option></select>
+  <select id="density">
+    <option value="0">跟随设备当前值</option>
+    <option value="10" selected>浓度 10</option>
+    <option value="8">浓度 8</option>
+    <option value="6">浓度 6</option>
+    <option value="4">浓度 4</option>
+    <option value="2">浓度 2</option>
+  </select>
+  <select id="fs">
+    <option value="26">默认字号</option>
+    <option value="34">大</option>
+    <option value="42">更大</option>
+  </select>
 </div>
 <button onclick="go()">打印</button>
+<div class="row" style="margin-top:10px">
+  <button class="ghost" onclick="refresh(true)">读设备状态</button>
+  <button class="ghost" onclick="refresh()">刷新</button>
+</div>
 <pre id="o">就绪</pre>
+
 <script>
+async function refresh(connect){
+  try{
+    const st = await (await fetch('/status')).json();
+    const bat = document.getElementById('bat');
+    const b = st.battery;
+    if (b && b.voltage != null){
+      bat.textContent = `电量 ${b.percent != null ? b.percent + '%' : '?'} · ${Number(b.voltage).toFixed(2)}V`;
+      bat.className = 'chip ' + (b.percent != null && b.percent <= 20 ? 'err'
+                                 : (b.percent != null && b.percent <= 40 ? 'warn' : 'ok'));
+    } else { bat.textContent = '电量 –'; bat.className = 'chip'; }
+    bat.title = '0x04 电池电压 × 0.05V 估算，±10%';
+
+    const pa = document.getElementById('paper');
+    const p = st.paperOutLastKnown;
+    if (p === true){ pa.textContent = '缺纸'; pa.className = 'chip err'; }
+    else if (p === false){ pa.textContent = '有纸'; pa.className = 'chip ok'; }
+    else { pa.textContent = '缺纸 –'; pa.className = 'chip'; }
+
+    const q = document.getElementById('queue');
+    q.textContent = st.pendingReprint ? '有单等纸重打' : `已打 ${st.printed} 张`;
+    q.className = 'chip ' + (st.pendingReprint ? 'warn' : '');
+
+    if (connect){
+      const d = await (await fetch('/device')).json();
+      if (d.ok && d.battery){
+        bat.textContent = `电量 ${d.battery.percent != null ? d.battery.percent + '%' : '?'} · ${Number(d.battery.voltage).toFixed(2)}V`;
+        bat.className = 'chip ' + (d.battery.percent != null && d.battery.percent <= 20 ? 'err'
+                                   : (d.battery.percent != null && d.battery.percent <= 40 ? 'warn' : 'ok'));
+      }
+      if (d.ok){ pa.textContent = d.paper_out ? '缺纸' : '有纸'; pa.className = 'chip ' + (d.paper_out ? 'err' : 'ok'); }
+    }
+  }catch(e){ /* 忽略 */ }
+}
+
 async function go(){
   const o=document.getElementById('o'); o.textContent='发送中…';
   try{
+    const body={text:document.getElementById('t').value, fontSize:+document.getElementById('fs').value};
+    const d=+document.getElementById('density').value; if (d) body.density=d;
     const r=await fetch('/print',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text:document.getElementById('t').value,
-        darken:+document.getElementById('darken').value,
-        fontSize:+document.getElementById('fs').value})});
+      body:JSON.stringify(body)});
     o.textContent=r.status+' '+JSON.stringify(await r.json(),null,2);
+    refresh();
   }catch(e){ o.textContent='失败: '+e.message }
 }
+refresh();
+setInterval(refresh, 30000);
 </script></body></html>"""
 
 

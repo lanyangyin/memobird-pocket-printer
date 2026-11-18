@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.3.3"
+VERSION = "1.4.0"
 
 # 缺纸自动重打（可在 /settings 里改，持久化到 settings.json）
 DEFAULT_SETTINGS = {

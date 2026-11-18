@@ -48,7 +48,7 @@ class BlePrinter:
 
     def __init__(self, address: str, *, write_uuid: str = CHR_WRITE, notify_uuid: str = CHR_NOTIFY,
                  settle: float = 0.02, timeout: float = 15.0, echo: bool = True,
-                 chunk: int = 180, batch: int = 1, window: int = 1):
+                 chunk: int = 180):
         self.address = address
         self.write_uuid = write_uuid
         self.notify_uuid = notify_uuid
@@ -56,8 +56,6 @@ class BlePrinter:
         self.timeout = timeout
         self.echo = echo
         self.chunk = max(20, int(chunk))     # 每次 GATT 写入的字节数
-        self.batch = max(1, int(batch))
-        self.window = max(1, int(window))    # 流控窗口：始终有几帧在固件缓冲里      # 并发写入数：>1 时不等上一片写完，显著提速
         self._client = None
         self._rx = bytearray()          # 通知分片的接收缓冲
         self._notifies: list[bytes] = []   # 已重组成完整帧
@@ -115,25 +113,14 @@ class BlePrinter:
         """按 MTU 切片写入（write-without-response 更快，失败回退 write-with-response）。"""
         assert self._client is not None
         step = self.chunk
-        pieces = [data[i:i + step] for i in range(0, len(data), step)]
-
-        async def send_one(piece: bytes):
+        for i in range(0, len(data), step):
+            piece = data[i:i + step]
             try:
                 await self._client.write_gatt_char(self.write_uuid, piece, response=False)
             except Exception:
                 await self._client.write_gatt_char(self.write_uuid, piece, response=True)
-
-        if self.batch <= 1:
-            for piece in pieces:
-                await send_one(piece)
-                if self.settle:
-                    await asyncio.sleep(self.settle)
-        else:
-            # 流水线：一批 batch 个写入并发提交，避免每次 50ms 的往返开销累积
-            for i in range(0, len(pieces), self.batch):
-                await asyncio.gather(*(send_one(p) for p in pieces[i:i + self.batch]))
-                if self.settle:
-                    await asyncio.sleep(self.settle)
+            if self.settle:
+                await asyncio.sleep(self.settle)
 
     async def wait_last_ack(self, total: int, timeout: float = 3.0) -> bool:
         """等固件 ack 到第 total 帧（cmd 0x04 ack 里 `0x0C` 是包序）。
@@ -186,11 +173,8 @@ class BlePrinter:
         for i, f in enumerate(frames, 1):
             await self.write(f)
             if flow_control:
-                # 窗口流控：只等"窗口之外"的那一帧，保证固件缓冲里始终有几帧，
-                # 电机就不会走走停停（逐帧等待会让纸一顿一顿的）
-                behind = i - self.window + 1
-                if behind >= 1:
-                    await self.wait_ack_at(behind, timeout=2.5)
+                # 逐帧等 ack：固件缓冲只装得下一帧，不等就会丢数据
+                await self.wait_ack_at(i, timeout=2.5)
             elif inter_frame:
                 await asyncio.sleep(inter_frame)
         if wait_ack and not flow_control:

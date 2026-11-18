@@ -48,7 +48,6 @@ const textReq = () => ({
   darken: parseInt($('#darken-text').value, 10),
   feed: $('#feed').checked,
   feedLines: parseInt($('#feed-lines').value, 10) || 0,
-  exact: $('#chk-exact').checked,
   totalMm: totalMm(),
 });
 
@@ -109,17 +108,15 @@ async function encode(req) {
 
   let d = E.ditherToRaw(gray, grayed.w, grayed.h, mode === 'none' ? 'threshold' : mode, null, darken);
 
-  // exact：内容结束即停，不补白
-  if (req.exact) {
-    // 跳过 lengthMm / totalMm 的补白
-  } else if (req.lengthMm) {
+  // 内容高度（不含固件那 18mm）
+  if (req.lengthMm) {
     const targetH = Math.round(parseFloat(req.lengthMm) * 8);
     d = E.padRaw(d.raw, d.w, d.h, targetH);
     log(`内容高度 ${req.lengthMm}mm → ${d.h} 点`, 'ok');
   }
 
   // 纸总长：内容高度 = 总长 - 固件固定的 18mm
-  if (!req.exact && req.totalMm) {
+  if (req.totalMm) {
     const targetH = E.contentDotsForTotal(parseFloat(req.totalMm), 203);
     d = E.padRaw(d.raw, d.w, d.h, targetH);
     log(`纸总长 ${req.totalMm}mm：内容 ${d.h} 点 (${(d.h / 8).toFixed(1)}mm) + 固件 18mm`, 'ok');
@@ -181,9 +178,7 @@ async function print(req, label) {
 
     // 终结帧：大图必须给固件一个"任务结束"信号，否则会中途断。
     // 用状态查询帧 —— 只一个来回，不驱动电机（零走纸）。
-    if (!($('#chk-exact') && $('#chk-exact').checked)) {
-      try { await link.query(window.MBBle.COMMIT_FRAME, 400); } catch (e) { /* 忽略 */ }
-    }
+    try { await link.query(window.MBBle.COMMIT_FRAME, 400); } catch (e) { /* 忽略 */ }
     if (i < pages.length - 1) await new Promise((r) => setTimeout(r, 400));
   }
 

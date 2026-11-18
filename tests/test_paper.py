@@ -117,19 +117,6 @@ check("分页后总行数不变", sum(p.size[1] for p in pages) == 2500,
       str(sum(p.size[1] for p in pages)))
 check("每页宽度不变", all(p.size[0] == 384 for p in pages))
 
-print("\n9) 不发终结帧（--exact）的安全上限")
-check("提示阈值 = 200 帧（不再是硬限制）", paper.EXACT_SAFE_FRAMES == 200,
-      str(paper.EXACT_SAFE_FRAMES))
-# 13 帧 ≈ 34mm；15 帧实测出白纸
-from memobird_printer.image import raw_to_bmp           # noqa: E402
-
-rows_13 = len(packet.build_bmp_job(
-    raw_to_bmp(384, 276, bytes(48 * 276), official=True)).frames)
-check("34mm 内容 ≈ 13 帧", rows_13 == 13, str(rows_13))
-rows_15 = len(packet.build_bmp_job(
-    raw_to_bmp(384, 318, bytes(48 * 318), official=True)).frames)
-check("40mm 内容 ≈ 15 帧（超过安全上限）", rows_15 == 15, str(rows_15))
-
 print()
 if fails:
     print(f"失败 {len(fails)} 项: {fails}")

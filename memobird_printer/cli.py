@@ -59,8 +59,6 @@ def _make_image(args):
 
     # 整张纸正好 N 毫米：给内容补白（或裁切）到目标高度
     total_mm = getattr(args, "total_mm", None)
-    if getattr(args, "exact", False):
-        total_mm = target_mm = None
     target_mm = getattr(args, "length_mm", None)
     if total_mm or target_mm:
         from .paper import OVERHEAD_MM, pad_to_length
@@ -223,11 +221,10 @@ def cmd_print(args) -> int:
     if args.ble:
         async def run():
             from .ble import BlePrinter
+            from .paper import FAST_PATH_FRAMES, paginate
 
             async with BlePrinter(args.ble, chunk=getattr(args, "chunk", 180),
-                                  settle=getattr(args, "settle", 0.002),
-                                  batch=getattr(args, "batch", 1),
-                                  window=getattr(args, "window", 1)) as b:
+                                  settle=getattr(args, "settle", 0.002)) as b:
                 preheat = not getattr(args, "no_preheat", False)
 
                 # 降浓度 = 每行加热更久 = 打印变慢 → 慢速 BLE 下长图才打得完整
@@ -241,90 +238,51 @@ def cmd_print(args) -> int:
                                                         packet.tlv(0x02, bytes([dens]))),
                                      wait=0.4, retries=1)
                     print(f"浓度：{restore} → {dens}（打完恢复）")
+
                 text_arg = getattr(args, "text", None)
-                plain_ascii = bool(text_arg) and all(ord(c) < 128 for c in text_arg)
-                if text_arg and not _image_path(args) and plain_ascii:
-                    job = packet.job_for_text(text_arg)
-                elif text_arg and not _image_path(args):
-                    # 中文必须走位图：这台固件的 GBK 文本帧没有中文字形（实测打出来是黑块）
-                    print("文本含中文 → 改走位图（GBK 文本帧无中文字形）", file=sys.stderr)
-                    job = packet.build_bmp_job(raw_to_bmp(w, h, raw, official=True),
-                                               chunk=getattr(args, "bmp_chunk", 1024))
-                else:
-                    # 位图（含中文/图片）统一在下面按"分段/分页"处理，这里不建 job
-                    job = None
-                seg_mm = getattr(args, "segment_mm", 0) or 0
                 is_text = bool(text_arg) and not _image_path(args)
-                if seg_mm > 0 and not is_text:
-                    from .paper import split_image
+                plain_ascii = bool(text_arg) and all(ord(c) < 128 for c in text_arg)
 
-                    pieces = split_image(args._gray, seg_mm)
-                    print(f"分段打印：{len(pieces)} 段 × ≤{seg_mm}mm")
-                    for n, piece in enumerate(pieces, 1):
-                        pw, ph, praw = dither_to_raw(piece, "threshold")
-                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True))
-                        await b.send_frames(pjob.frames, preheat=preheat, inter_frame=0.02)
-                        await asyncio.sleep(0.25)
-                        await b.send_frames(packet.feed_job(1).frames, preheat=False)
-                        print(f"  段 {n}/{len(pieces)}  {ph} 点 ({ph/8:.1f}mm)")
-                        await asyncio.sleep(0.35)
-                elif not is_text:
-                    from .paper import MAX_ROWS_PER_JOB, paginate
+                if is_text and plain_ascii:
+                    # 纯 ASCII：走固件文本帧（体积最小、最快）
+                    job = packet.job_for_text(text_arg)
+                    await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
+                else:
+                    if is_text:
+                        # 中文必须走位图：这台固件的 GBK 文本帧没有中文字形（打出来是黑块）
+                        print("文本含中文 → 改走位图（GBK 文本帧无中文字形）", file=sys.stderr)
 
-                    pages = ([args._gray] if getattr(args, "no_paginate", False)
-                             else paginate(args._gray))
+                    pages = paginate(args._gray)
                     if len(pages) > 1:
-                        print(f"图高 {args._gray.size[1]} 行 > 单任务上限 {MAX_ROWS_PER_JOB} 行 "
+                        print(f"图高 {args._gray.size[1]} 行超过单任务阈值 "
                               f"→ 分 {len(pages)} 页（页间有固件 18mm 空隙）", file=sys.stderr)
-                    if getattr(args, "exact", False):
-                        total_frames = sum(
-                            max(1, (62 + 48 * page.size[1] + 1023) // 1024) for page in pages)
-                        from .paper import EXACT_SAFE_FRAMES
-
-                        if total_frames > EXACT_SAFE_FRAMES:
-                            print(f"⚠ --exact 不发终结帧：本次约 {total_frames} 帧，"
-                                  f"超过 {EXACT_SAFE_FRAMES} 帧（实测 24 帧/62mm 没问题，"
-                                  f"更大先小图试一次）", file=sys.stderr)
 
                     for n, page in enumerate(pages, 1):
                         pw, ph, praw = dither_to_raw(page, args.mode)
-                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True),
-                                                    chunk=getattr(args, "bmp_chunk", 1024))
-                        from .paper import FAST_PATH_FRAMES
+                        pjob = packet.build_bmp_job(raw_to_bmp(pw, ph, praw, official=True))
 
-                        # 自动选节奏：短内容用快速路径（连续、不顿），长内容必须流控（否则丢数据）
-                        n_frames = len(pjob.frames)
-                        auto_fast = n_frames <= FAST_PATH_FRAMES
-                        use_flow = (not auto_fast) and (not getattr(args, "no_flow", False))
-                        if getattr(args, "no_flow", False):
-                            use_flow = False
-                        print(f"  {n_frames} 帧 → "
-                              f"{'快速路径（连续）' if not use_flow else '流控（完整但会顿）'}",
+                        # 自动选节奏：短内容不等 ack（连续、不顿）；长内容必须流控（否则丢数据）
+                        use_flow = len(pjob.frames) > FAST_PATH_FRAMES and not getattr(args, "no_flow", False)
+                        print(f"  {len(pjob.frames)} 帧 → "
+                              f"{'流控（完整但会顿）' if use_flow else '快速路径（连续）'}",
                               file=sys.stderr)
-                        await b.send_frames(
-                            pjob.frames, preheat=preheat,
-                            inter_frame=getattr(args, "inter_frame", 0.03),
-                            wait_ack=True,
-                            flow_control=use_flow)
+
+                        await b.send_frames(pjob.frames, preheat=preheat,
+                                            inter_frame=getattr(args, "inter_frame", 0.03),
+                                            wait_ack=use_flow, flow_control=use_flow)
                         if len(pages) > 1:
                             print(f"  第 {n}/{len(pages)} 页  {ph} 行 ({ph / 8:.1f}mm)", file=sys.stderr)
-                            # 每页后给固件一个"结束"信号（状态查询，零走纸）
                             await asyncio.sleep(0.3)
-                            await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.5, retries=1)
-                else:
-                    await b.send_frames(job.frames, preheat=preheat, inter_frame=0.03)
-                # 图片帧没有结束标记：用状态查询当终结帧 → 零走纸
-                if not (getattr(args, "text", None) and not _image_path(args)):
-                    term = "none" if getattr(args, "exact", False) else getattr(args, "terminator", "commit")
+                            await b.transact(packet.commit_frame(), wait=0.6, retries=1)
+
+                    # 终结帧：让固件把位图真正打出来（不驱动电机 ⇒ 不多走纸）
+                    term = getattr(args, "terminator", "commit")
                     if term == "feed":
                         await asyncio.sleep(0.3)
                         await b.send_frames(packet.feed_job(3).frames, preheat=False, inter_frame=0.03)
-                    elif term == "commit":
+                    else:
                         await asyncio.sleep(0.2)
                         await b.transact(packet.commit_frame(), wait=0.6, retries=1)
-                    elif term == "status":
-                        await asyncio.sleep(0.15)
-                        await b.transact(packet.build_frame(packet.CMD_STATUS), wait=0.5, retries=1)
 
                 # 恢复原浓度
                 if dens and restore is not None:
@@ -366,7 +324,7 @@ def cmd_feed(args) -> int:
 
     if mm is not None:
         frames, meta = blank_frames(mm=mm, dpi=args.dpi, tick=args.tick,
-                                    total=getattr(args, "total", False))
+                                    total=not getattr(args, "content", False))
     else:
         frames, meta = line_frames(args.lines)
 
@@ -525,27 +483,14 @@ def build_parser() -> argparse.ArgumentParser:
                        help="补白时内容放哪（默认 top）")
         p.add_argument("--no-preheat", action="store_true", help="不发热身包（排查用）")
         p.add_argument("--chunk", type=int, default=180, help="GATT 每次写入字节数")
-        p.add_argument("--bmp-chunk", type=int, default=1024,
-                       help="位图每帧载荷字节数（默认 1024；加大减少帧数，绕过固件单任务帧数上限）")
         p.add_argument("--settle", type=float, default=0.002, help="每片之后停顿（秒）")
-        p.add_argument("--batch", type=int, default=1, help="并发写入数（>1 提速，可能丢包）")
         p.add_argument("--density", type=int, default=0,
                        help="打印浓度 1..10（0=用设备当前值）；打完自动恢复原值")
         p.add_argument("--no-flow", action="store_true", help="关闭逐帧流控（排查用）")
         p.add_argument("--inter-frame", type=float, default=0.03,
                        help="帧间固定间隔（秒）；0.2~0.4 可让出纸连续又不丢数据")
-        p.add_argument("--window", type=int, default=1,
-                       help="流控窗口（1=每帧等 ack，最稳但纸会一顿一顿；>1 可能丢数据）")
-        p.add_argument("--no-paginate", action="store_true",
-                       help="不按 400 行分页，整张一次发（排查固件上限用）")
-        p.add_argument("--exact", action="store_true",
-                       help="诊断用：不补白、不发终结帧（实测并不能省掉尾部 7mm）")
-        p.add_argument("--terminator", default="commit",
-                       choices=["commit", "feed", "status", "none"],
-                       help="终结帧：commit=cmd 0x08 提交(默认，不驱动电机) / status=状态查询 / "
-                            "feed=走纸 / none=不发（大图会出白纸）")
-        p.add_argument("--segment-mm", type=float, default=0,
-                       help="长图分段打印，每段毫米数（>0 启用；绕过 BLE 吞吐不足）")
+        p.add_argument("--terminator", default="commit", choices=["commit", "feed"],
+                       help="收尾方式：commit=提交帧(默认) / feed=再走 N 行空白")
         return p
 
     # preview / text：位置参数是文本
@@ -582,8 +527,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--lines", type=int, default=3, help="按行走纸（粗）")
     s.add_argument("--dpi", type=int, default=203, choices=[203, 300])
     s.add_argument("--tick", action="store_true", help="画 1 个黑点，防止固件跳过全白图")
-    s.add_argument("--total", action="store_true",
-                   help="--mm 表示纸总长（自动扣掉固件固定多喂的 18mm）")
+    s.add_argument("--content", action="store_true",
+                   help="--mm 表示内容长度（默认是纸总长；内容长度 = 总长 + 18mm）")
     s.add_argument("--ble")
     s.add_argument("--spp")
     s.add_argument("--lan")

@@ -55,7 +55,7 @@ from memobird_printer.image import (                                 # noqa: E40
     dither_to_raw, prepare, raw_to_bmp,
 )
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
 
@@ -114,9 +114,6 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
             raise ValueError("image 为空")
         img = prepare(_load_image(data), mode=mode)
 
-    if req.get("exact"):
-        req = {**req, "feed": False, "lengthMm": None, "totalMm": None}
-
     total_mm = req.get("totalMm")
     if total_mm:
         from memobird_printer.paper import pad_to_length
@@ -139,8 +136,7 @@ def build_frames(req: dict) -> tuple[list[bytes], dict]:
     job = packet.build_bmp_job(bmp)
     frames = list(job.frames)
     # 提交帧：让固件把位图真正打出来（不驱动电机 ⇒ 不多走纸）
-    if not req.get("exact"):
-        frames.append(packet.commit_frame())
+    frames.append(packet.commit_frame())
     if feed:
         frames += packet.feed_job(3).frames
     return frames, {"format": "bmp", "chunks": job.chunks, "bytes": len(bmp),

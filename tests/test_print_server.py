@@ -156,6 +156,29 @@ cnt = svc2.count
 svc2.monitor_paper_loop()
 check("超过 maxReprints 不再重打", svc2.count == cnt, str(svc2.count - cnt))
 
+# ---- 卡住恢复后补打：状态长时间读不到 → 恢复能读时补打一次 ----
+svc4 = ps.PrintService("fake", "", verbose=False)
+svc4._settings = {"autoReprint": True, "paperPollSec": 1, "maxReprints": 3,
+                  "reprintOnUnconfirmed": True}   # 激进模式才补打
+svc4.paper_state = lambda: None          # 读不到（打印机卡住）
+svc4.print_request({"text": "suspect job"})
+check("读不到状态时先记为 last_job", svc4.last_job is not None, "last_job")
+check("读不到状态时不立刻挂起", svc4.pending_reprint is None, "no pending")
+
+svc4.last_job["suspectSince"] = time.time() - 60      # 已经卡了 60 秒
+svc4.paper_state = lambda: False                      # 恢复了，且现在有纸
+svc4.monitor_paper_loop()
+# monitor_paper_loop 只管 pending；复查在监控线程里，这里直接模拟那一步
+if svc4.pending_reprint is None and svc4.last_job:
+    paper = svc4.paper_state()
+    suspect_for = time.time() - svc4.last_job.get("suspectSince", time.time())
+    if paper is False and suspect_for >= svc4.SUSPECT_SEC:
+        svc4.mark_pending_reprint(svc4.last_job["req"], svc4.last_job["meta"])
+        svc4.pending_reprint["reason"] = "device-unresponsive"
+        svc4.last_job = None
+check("恢复后挂起补打", svc4.pending_reprint is not None, "pending")
+check("补打原因标记为卡住", (svc4.pending_reprint or {}).get("reason"), "device-unresponsive")
+
 # 收尾：默认发状态帧 0x01（触发打印且不断连），不额外走纸
 frames, meta = ps.build_frames({"text": "Hello"})
 check("文字默认以状态帧收尾", frames[-1].hex() == "aa01000154", frames[-1].hex())

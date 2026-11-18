@@ -198,6 +198,25 @@ class BlePrinter:
             pass
         await self.__aenter__()
 
+    async def paper_state(self, *, wait: float = 1.5) -> bool | None:
+        """读缺纸状态：先发 0x01 查询；没回包就退回用设备主动推的 0x0A。"""
+        from . import device as _dev
+
+        try:
+            frames = await self.transact(_dev.status_frame(), wait=wait, retries=1)
+        except Exception:                                      # noqa: BLE001
+            frames = []
+        infos = [i for i in ( _dev.parse_status(f) for f in frames) if i]
+        if infos:
+            return _dev.paper_out(infos[-1])
+        # 退路：等设备主动推一帧状态（刚连上时要等 0.5~2 秒才来）
+        for _ in range(int(max(1.0, wait * 2) * 10)):
+            got = _dev.paper_out_from_notifies(self._notifies)
+            if got is not None:
+                return got
+            await asyncio.sleep(0.1)
+        return None
+
     async def wait_last_ack(self, total: int, timeout: float = 3.0) -> bool:
         """等固件 ack 到第 total 帧（cmd 0x04 ack 里 `0x0C` 是包序）。
 

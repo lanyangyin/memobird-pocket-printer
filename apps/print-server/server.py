@@ -62,6 +62,9 @@ DEFAULT_SETTINGS = {
     "autoReprint": True,      # 打印后发现缺纸 → 等纸回来自动重打
     "paperPollSec": 3,        # 多久查一次有没有纸
     "maxReprints": 3,         # 同一单最多自动重打几次
+    # 打印机"卡住/读不到状态"时要不要也补打？
+    # 默认关：只在**明确读到缺纸**时补打，避免正常打完又重复打一张
+    "reprintOnUnconfirmed": False,
 }
 MAX_BODY = 12 * 1024 * 1024      # 图片 base64 可能有几 MB
 
@@ -268,6 +271,18 @@ class BleWorker:
     def gatt(self, timeout: float = 30) -> list[str]:
         return self.call(self._gatt(), timeout)
 
+    async def _paper_state(self) -> bool | None:
+        from memobird_printer.ble import BlePrinter
+
+        async with BlePrinter(self.target, settle=self.settle, echo=False) as dev:
+            return await dev.paper_state()
+
+    def paper_state(self, timeout: float = 30) -> bool | None:
+        try:
+            return self.call(self._paper_state(), timeout)
+        except Exception:                                      # noqa: BLE001
+            return None
+
     def set_setting(self, tag: int, value: int, timeout: float = 30) -> dict:
         return self.call(self._set_setting(tag, value), timeout)
 
@@ -326,7 +341,8 @@ class PrintService:
         self.count = 0
         self.settings_file = settings_file
         self._settings = self.load_settings()
-        self.pending_reprint: dict | None = None      # 缺纸后等着重打的那一单
+        self.pending_reprint: dict | None = None
+        self.last_job: dict | None = None      # 最近一次成功打印（供复查缺纸）      # 缺纸后等着重打的那一单
         self._monitor_stop = threading.Event()
         self._monitor: threading.Thread | None = None
 
@@ -377,6 +393,8 @@ class PrintService:
             cfg["paperPollSec"] = max(1, min(60, int(patch["paperPollSec"])))
         if "maxReprints" in patch:
             cfg["maxReprints"] = max(0, min(10, int(patch["maxReprints"])))
+        if "reprintOnUnconfirmed" in patch:
+            cfg["reprintOnUnconfirmed"] = bool(patch["reprintOnUnconfirmed"])
         self._settings = cfg
         self.save_settings(cfg)
         return cfg
@@ -414,6 +432,9 @@ class PrintService:
         except Exception as exc:                               # noqa: BLE001
             self.last_error = f"autoReprint: {type(exc).__name__}: {exc}"
 
+    # 状态读不到超过这么久 → 认为有可能缺纸/卡住，恢复后补打
+    SUSPECT_SEC = 30
+
     # ------------------------------------------------------------------ #
     # 后台线程：定时看有没有纸，有纸就把挂起的那单重打
     # ------------------------------------------------------------------ #
@@ -427,6 +448,25 @@ class PrintService:
                 try:
                     if self.pending_reprint:
                         self.monitor_paper_loop()
+                    elif self.last_job:
+                        # 复查：这一单打完时状态没读到，现在再确认
+                        paper = self.paper_state()
+                        suspect_for = time.time() - self.last_job.get(
+                            "suspectSince", time.time())
+                        if paper is True:
+                            self.mark_pending_reprint(self.last_job["req"],
+                                                      self.last_job["meta"])
+                            self.last_job = None
+                        elif paper is False:
+                            if (suspect_for >= self.SUSPECT_SEC
+                                    and self._settings.get("reprintOnUnconfirmed")):
+                                # 开了激进模式才这么干：长时间读不到状态后又恢复，
+                                # 很可能当时缺纸/卡住 → 补打一次
+                                self.mark_pending_reprint(self.last_job["req"],
+                                                          self.last_job["meta"])
+                                self.pending_reprint["attempts"] = 0
+                                self.pending_reprint["reason"] = "device-unresponsive"
+                            self.last_job = None
                 except Exception:                              # noqa: BLE001
                     pass
                 wait = float(self._settings.get("paperPollSec", 3))
@@ -506,15 +546,23 @@ class PrintService:
             out = {"ok": True, "meta": meta, "elapsed_ms": self.last["elapsed_ms"]}
             out.update(result)
 
-            # 打完发现没纸（或纸在打的过程中用完了）→ 等纸回来自动重打
+            # 打完检查缺纸。注意：大任务结束后设备常断开，状态可能读不到（None），
+            # 所以读不到时把这一单记下来，交给后台线程继续确认。
             if self._settings.get("autoReprint", True):
                 paper = self.paper_state()
                 if paper is True:
                     self.mark_pending_reprint(req, meta)
                     out["paperOut"] = True
                     out["autoReprint"] = "已挂起：检测到缺纸，放纸后会自动重打"
+                    self.last_job = None
                 elif paper is False:
                     self.pending_reprint = None
+                    self.last_job = None
+                else:
+                    self.last_job = {"req": req, "meta": meta,
+                                     "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                     "suspectSince": time.time()}
+                    out["paperCheck"] = "设备状态暂时读不到，后台会继续确认是否缺纸"
             return out
 
     # ------------------------------------------------------------------ #

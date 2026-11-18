@@ -251,6 +251,18 @@ async def read_info(link, *, detail: bool = True, wait: float = 1.5) -> list[Dev
     return [i for i in (parse_status(f) for f in frames) if i and i.cmd in (CMD_STATUS_DETAIL, CMD_STATUS)]
 
 
+def paper_out_from_notifies(frames, *, max_age: int | None = None) -> bool | None:
+    """从一组通知帧里找最近的一条状态（含设备主动推的 0x0A），返回缺纸标志。"""
+    for f in reversed(list(frames)):
+        info = parse_status(f)
+        if not info:
+            continue
+        if info.cmd not in (CMD_STATUS_DETAIL, CMD_STATUS, CMD_STATUS_PUSH):
+            continue
+        return paper_out(info)
+    return None
+
+
 async def wait_for_paper(link, *, timeout: float | None = 300.0,
                         interval: float = 3.0, on_tick=None) -> bool:
     """等打印机重新装上纸。返回 True=已经有纸，False=超时/读不到。

@@ -87,7 +87,9 @@ async function printApi(path, req, label) {
     const j = await api(path, req);
     const pages = j.pages || [j];
     $('#meta').textContent = j.meta
-      ? `${j.meta.format} · ${j.meta.width}×${j.meta.height}`
+      ? `纸 57mm（内容 ${(j.meta.height / 8).toFixed(1)}mm 居中，两侧各 `
+        + `${((456 - j.meta.width) / 2 / 8).toFixed(1)}mm 纸边）`
+        + ` · 总长 ${((j.meta.height + 144) / 8).toFixed(1)}mm`
         + (pages.length > 1 ? ` · ${pages.length} 页` : '')
       : '';
     const chunk = parseInt($('#chunk').value, 10);

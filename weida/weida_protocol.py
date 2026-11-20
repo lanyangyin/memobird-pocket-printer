@@ -138,8 +138,80 @@ def job_from_1bpp(raw: bytes, width_dots: int, height_dots: int,
 
 
 # --------------------------------------------------------------------------- #
+# EBV（变量长度整数）：<192 一字节，否则 0xC0|hi, lo
+# --------------------------------------------------------------------------- #
+def ebv(n: int) -> bytes:
+    if n < 0:
+        raise ValueError("EBV 不能为负")
+    if n < 192:
+        return bytes([n])
+    if n > 0x3FFF:
+        raise ValueError("EBV 超出 0x3FFF")
+    return bytes([0xC0 | (n >> 8), n & 0xFF])
+
+
+def debv(data: bytes, offset: int = 0) -> tuple[int, int]:
+    """解 EBV，返回 (值, 消耗的字节数)。"""
+    if offset >= len(data):
+        return -1, 0
+    first = data[offset]
+    if first < 192:
+        return first, 1
+    if offset + 1 >= len(data):
+        return -1, 0
+    return ((first & 0x3F) << 8) | data[offset + 1], 2
+
+
+# --------------------------------------------------------------------------- #
+# 设置类命令的解析
+# --------------------------------------------------------------------------- #
+def decode_darkness(data: bytes) -> dict:
+    """0x43：回 [当前, 最大, 最小, 默认]，写入时发 等级-1。"""
+    if not data:
+        return {}
+    out = {"raw": data.hex(" "), "level": data[0]}
+    if len(data) >= 4:
+        out.update({"max": data[1], "min": data[2], "default": data[3]})
+    return out
+
+
+def decode_speed(data: bytes) -> dict:
+    """0x44：回 [当前, ...]，写入时发 等级-1。"""
+    if not data:
+        return {}
+    return {"raw": data.hex(" "), "level": data[0]}
+
+
+def decode_gap_len(data: bytes) -> dict:
+    """0x45：EBV，单位 0.01mm。"""
+    val, _ = debv(data)
+    return {"raw": data.hex(" "), "mm": round(val / 100.0, 2) if val >= 0 else None}
+
+
+def decode_counters(data: bytes) -> dict:
+    """0x73：4 个 int32 大端计数。"""
+    if len(data) < 16:
+        return {"raw": data.hex(" ") if data else ""}
+    vals = [int.from_bytes(data[i:i + 4], "big") for i in range(0, 16, 4)]
+    return {"raw": data.hex(" "), "total": vals[0], "values": vals}
+
+
+def decode_version(data: bytes) -> str:
+    return data.split(b"\x00")[0].decode("ascii", "replace")
+
+
+def decode_text(data: bytes, encoding: str = "ascii") -> str:
+    return data.replace(b"\x00", b"").decode(encoding, "replace")
+
+
+# --------------------------------------------------------------------------- #
 # 状态（CMD_IS_PRINTABLE = 0x70）
 # --------------------------------------------------------------------------- #
+# 纸张/间隙类型（LabelControl.GapType / LPA_GapType）
+GAP_TYPES = {
+    0: "连续纸", 1: "定位孔", 2: "间隙纸(不干胶)", 3: "黑标", 4: "黑标透明贴",
+}
+
 PRINTABLE_STATES = {
     0: "可打印", 1: "正在打印", 2: "正在转动", 10: "没有任务", 11: "页面未收全",
     12: "任务被取消", 20: "环境未就绪", 30: "电压过低", 31: "电压过高",
@@ -163,6 +235,14 @@ CMD_SPEED = 0x44
 CMD_POSITIONING = 0x5C
 CMD_PUSH_STATUS = 0x40
 CMD_REQ_ADCVALUE = 0x88      # 读数：payload [1]=电量 [2]=打印头温度
+CMD_AUTOPOWEROFF = 0x48
+CMD_LANGUAGE = 0x49
+CMD_PRINT_COUNTER = 0x73
+CMD_CAP_GAPTYPE = 0x52
+CMD_CAP_MOTORMODE = 0x57
+CMD_CAP_LANGUAGE = 0x59
+CMD_SOFTWARE_VERSION = 0x7C
+CMD_DEVICE_DMINFO = 0x7D
 CMD_ENABLE_SETTING = 0x80    # 0x80 开 0x7F 是初始化的一部分
 ADCEVT_POWER = 1
 ADCEVT_TPHTM = 2
@@ -380,6 +460,15 @@ def selftest() -> int:
     chk("缺纸状态码 35", st["text"], "缺纸")
     st2 = decode_status(bytes([0]))
     chk("正常状态码 0", st2["text"], "可打印")
+
+    chk("EBV 小值", ebv(150).hex(" "), "96")
+    chk("EBV 大值", ebv(300).hex(" "), "c1 2c")
+    chk("EBV 解码", debv(bytes([0xC1, 0x2C])), (300, 2))
+    chk("间隙 300 → 3.00mm", decode_gap_len(bytes([0xC1, 0x2C]))["mm"], 3.0)
+    chk("浓度解析", decode_darkness(bytes([5, 15, 1, 4]))["max"], 15)
+    chk("计数解析", decode_counters(bytes.fromhex(
+        "00000d5b 00000d59 0000039c 00000015".replace(" ", "")))["total"], 3419)
+    chk("版本解析", decode_version(b"3.1.20260924\x00"), "3.1.20260924")
 
     raster = gs_raster(bytes((384 + 7) // 8 * 2), 384, 2)
     chk("GS v 0 头", raster[:8].hex(" "), "1d 76 30 00 30 00 02 00")

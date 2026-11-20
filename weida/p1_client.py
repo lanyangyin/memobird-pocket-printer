@@ -38,13 +38,13 @@ INFO_UUIDS = {
     "软件": "00002a28-0000-1000-8000-00805f9b34fb",
 }
 
-# 标签间隙类型（LabelControl.GapType）
+# 名称 → 数值（中文别名也接受）
 GAP_TYPES = {
-    "none": 0,        # 连续纸
-    "hole": 1,        # 定位孔
-    "gap": 2,         # 间隙纸（不干胶标签）
-    "black": 3,       # 黑标
-    "transparent": 4,  # 透明纸
+    "none": 0, "continuous": 0, "连续": 0,
+    "hole": 1, "孔": 1,
+    "gap": 2, "不干胶": 2, "标签": 2,
+    "black": 3, "黑标": 3,
+    "transparent": 4, "trans": 4, "透明": 4,
 }
 
 DEFAULT_CHUNK = 20
@@ -260,6 +260,65 @@ class P1Client:
     # 忙（等一会就好）
     BUSY_CODES = (1, 2)
 
+    # ---------------- 设置读写 ----------------
+    async def _get(self, cmd: int, timeout: float = 3.0) -> bytes | None:
+        r = await self.query(cmd, b"", timeout=timeout)
+        return r[1] if r else None
+
+    async def settings(self) -> dict:
+        """一次读全部设置（浓度/速度/纸张类型/间隙/自动关机/计数/能力）。"""
+        out: dict = {}
+        d = await self._get(W.CMD_DARKNESS)
+        if d:
+            out["darkness"] = W.decode_darkness(d)
+        sp = await self._get(W.CMD_SPEED)
+        if sp:
+            out["speed"] = W.decode_speed(sp)
+        gt = await self._get(W.CMD_GAP_TYPE)
+        if gt:
+            out["gap_type"] = gt[0]
+            out["gap_type_text"] = W.GAP_TYPES.get(gt[0], f"未知({gt[0]})")
+        gl = await self._get(W.CMD_GAP_LEN)
+        if gl:
+            out["gap_len"] = W.decode_gap_len(gl)
+        ap = await self._get(W.CMD_AUTOPOWEROFF)
+        if ap:
+            out["auto_poweroff_min"] = ap[0]
+        cnt = await self._get(W.CMD_PRINT_COUNTER)
+        if cnt:
+            out["counters"] = W.decode_counters(cnt)
+        cap = await self._get(W.CMD_CAP_GAPTYPE)
+        if cap:
+            out["supported_gap_types"] = list(cap)
+        sw = await self._get(W.CMD_SOFTWARE_VERSION)
+        if sw:
+            out["software_version"] = W.decode_version(sw)
+        return out
+
+    async def set_darkness(self, level: int) -> bool:
+        """浓度（官方 SDK 语义：等级 1..15，发送时 -1）。"""
+        if not 1 <= level <= 15:
+            raise ValueError("浓度范围 1..15")
+        return await self.send_cmd(W.CMD_DARKNESS, bytes([level - 1]))
+
+    async def set_speed(self, level: int) -> bool:
+        """速度（等级 1..5，发送时 -1）。"""
+        if not 1 <= level <= 5:
+            raise ValueError("速度范围 1..5")
+        return await self.send_cmd(W.CMD_SPEED, bytes([level - 1]))
+
+    async def set_gap_type(self, gap) -> bool:
+        """纸张类型：none/hole/gap/black/transparent 或数字。"""
+        val = W.GAP_TYPES[gap] if isinstance(gap, str) else int(gap)
+        return await self.send_cmd(W.CMD_GAP_TYPE, bytes([val & 0xFF]))
+
+    async def set_gap_len(self, mm: float) -> bool:
+        """间隙长度（单位 mm，内部按 0.01mm 存）。"""
+        return await self.send_cmd(W.CMD_GAP_LEN, W.ebv(int(round(mm * 100))))
+
+    async def set_auto_poweroff(self, minutes: int) -> bool:
+        return await self.send_cmd(W.CMD_AUTOPOWEROFF, bytes([minutes & 0xFF]))
+
     async def ensure_ready(self, *, wait: float = 12.0, interval: float = 0.4) -> dict:
         """打印前检查；正在打印/转马达时轮询等到就绪。
 
@@ -328,6 +387,18 @@ class P1Client:
                 ok += 1
         return ok
 
+    async def print_text(self, text: str, **kw) -> bool:
+        """打印文本（自动换行，标签尺寸默认 40x30mm）。"""
+        raw, w, h = render_text(text, **kw)
+        width_mm = kw.get("width_mm", 40)
+        return await self.print_label_1bpp(raw, w, h, width_mm=int(width_mm))
+
+    async def print_qr(self, data: str, **kw) -> bool:
+        """打印二维码。"""
+        raw, w, h = render_qr(data, **kw)
+        width_mm = kw.get("width_mm", 40)
+        return await self.print_label_1bpp(raw, w, h, width_mm=int(width_mm))
+
     async def print_png(self, path: str, *, width_dots: int = 384,
                         threshold: int = 128, feed_dots: int = 24) -> bool:
         from PIL import Image
@@ -345,6 +416,112 @@ class P1Client:
         return await self.print_1bpp(bytes(raw), width_dots, img.height, feed_dots=feed_dots)
 
 
+
+
+# --------------------------------------------------------------------------- #
+# 渲染：文本 / 二维码 → 1bpp 位图（1=黑）
+# --------------------------------------------------------------------------- #
+DPI = 203
+MM = DPI / 25.4          # 每毫米点数 ≈ 8
+
+
+def _mm(v: float) -> int:
+    return int(round(v * MM))
+
+
+def blank_canvas(width_mm: float = 40, height_mm: float = 30) -> tuple[bytearray, int, int]:
+    w, h = _mm(width_mm), _mm(height_mm)
+    return bytearray(((w + 7) // 8) * h), w, h
+
+
+def _paste(img, canvas: bytearray, cw: int, ch: int, ox: int, oy: int,
+           threshold: int = 128) -> None:
+    """把 PIL 灰度图贴到 1bpp 画布。"""
+    px = img.load()
+    row = (cw + 7) // 8
+    for y in range(min(img.height, ch - oy)):
+        for x in range(min(img.width, cw - ox)):
+            if px[x, y] < threshold:
+                gy, gx = oy + y, ox + x
+                canvas[gy * row + (gx >> 3)] |= 0x80 >> (gx & 7)
+
+
+def render_text(text: str, *, width_mm: float = 40, height_mm: float = 30,
+                font_mm: float = 3.5, margin_mm: float = 1.5,
+                line_space: float = 1.2, align: str = "left",
+                font_path: str | None = None) -> tuple[bytes, int, int]:
+    """把文本渲染成 1bpp 位图（自动按宽度换行）。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    canvas, cw, ch = blank_canvas(width_mm, height_mm)
+    size = max(8, _mm(font_mm))
+    if font_path is None:
+        for cand in (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf"):
+            if os.path.exists(cand):
+                font_path = cand
+                break
+    font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+
+    avail = cw - 2 * _mm(margin_mm)
+    lines: list[str] = []
+    for para in text.split("\n"):
+        cur = ""
+        for chx in para:
+            if font.getlength(cur + chx) <= avail:
+                cur += chx
+            else:
+                lines.append(cur)
+                cur = chx
+        lines.append(cur)
+
+    img_h = int(len(lines) * size * line_space) + 4
+    img = Image.new("L", (cw, max(img_h, ch)), 255)
+    draw = ImageDraw.Draw(img)
+    y = _mm(margin_mm)
+    for ln in lines:
+        w = font.getlength(ln)
+        x = _mm(margin_mm)
+        if align == "center":
+            x = max(0, int((cw - w) / 2))
+        elif align == "right":
+            x = max(0, int(cw - w - _mm(margin_mm)))
+        draw.text((x, y), ln, font=font, fill=0)
+        y += int(size * line_space)
+    _paste(img, canvas, cw, ch, 0, 0)
+    return bytes(canvas), cw, ch
+
+
+def render_qr(data: str, *, width_mm: float = 40, height_mm: float = 30,
+              box_mm: float = 24, margin_mm: float = 2,
+              caption: str = "") -> tuple[bytes, int, int]:
+    """把字符串渲染成二维码（居中，可带下方说明文字）。"""
+    import qrcode
+    from PIL import Image
+
+    qr = qrcode.QRCode(border=1, box_size=1)
+    qr.add_data(data)
+    qr.make(fit=True)
+    qimg = qr.make_image(fill_color="black", back_color="white").convert("L")
+
+    canvas, cw, ch = blank_canvas(width_mm, height_mm)
+    size = _mm(box_mm)
+    qimg = qimg.resize((size, size), Image.NEAREST)
+    ox = (cw - size) // 2
+    oy = max(0, _mm(margin_mm))
+    _paste(qimg, canvas, cw, ch, ox, oy)
+
+    if caption:
+        cimg, ccw, cch = render_text(caption, width_mm=width_mm, height_mm=2,
+                                     font_mm=2.8, margin_mm=margin_mm, align="center")
+        row = (ccw + 7) // 8
+        cy = oy + size + _mm(1)
+        for y in range(min(cch, ch - cy)):
+            for x in range(ccw):
+                if cimg[y * row + (x >> 3)] & (0x80 >> (x & 7)):
+                    canvas[(cy + y) * ((cw + 7) // 8) + (x >> 3)] |= 0x80 >> (x & 7)
+    return bytes(canvas), cw, ch
+
+
 # --------------------------------------------------------------------------- #
 def _demo_image(width: int = 384, height: int = 40) -> tuple[bytes, int, int]:
     row = (width + 7) // 8
@@ -359,7 +536,8 @@ def _demo_image(width: int = 384, height: int = 40) -> tuple[bytes, int, int]:
 async def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Dothantech P1 BLE 客户端")
     ap.add_argument("what", nargs="?", default="demo",
-                    choices=["info", "status", "demo", "print-png", "print-label", "cmd"])
+                    choices=["info", "status", "settings", "demo", "print-png",
+                             "print-label", "print-text", "print-qr", "cmd"])
     ap.add_argument("arg", nargs="?", help="print-png 的路径 / cmd 的命令码")
     ap.add_argument("--addr", default="28:D4:1E:9A:99:DB")
     ap.add_argument("--feed", type=int, default=24, help="打完走纸多少点")
@@ -400,6 +578,25 @@ async def main(argv: list[str] | None = None) -> int:
             if t.get("ok"):
                 print(f"  打印头: {t['head_temp_c']}°C")
             return 0
+
+        if args.what == "settings":
+            st = await p1.settings()
+            import json as _json
+            print(_json.dumps(st, ensure_ascii=False, indent=2))
+            return 0
+
+        if args.what == "print-text":
+            ok = await p1.print_text(args.arg or "Hello P1", width_mm=args.gap and 40 or 40,
+                                     height_mm=30)
+            print(f"  结果: {'已发送 ' + str(p1.sent_bytes) + ' 字节' if ok else '中断'}")
+            await asyncio.sleep(1.5)
+            return 0 if ok else 1
+
+        if args.what == "print-qr":
+            ok = await p1.print_qr(args.arg or "https://example.com", caption=args.arg or "")
+            print(f"  结果: {'已发送 ' + str(p1.sent_bytes) + ' 字节' if ok else '中断'}")
+            await asyncio.sleep(1.5)
+            return 0 if ok else 1
 
         if args.what == "cmd":
             code = int(args.arg, 0) if args.arg else 0x79

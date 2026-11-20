@@ -62,6 +62,46 @@
 | `CMD_POSITIONING` | 0x5C | 问 | 定位（北斗/GPS，非走纸） |
 | `CMD_PUSH_STATUS` | 0x40 | 推 | 电量/状态主动上报 |
 
+### 0.3b 每条命令的实测回包（P1 / 固件 5.20）
+
+| 命令 | 回包 | 解析 |
+|---|---|---|
+| `0x70` | `1f 70 1c 00 02 02 96 f1 36 01 24 …` | `[0]`=状态码 0=可打印 |
+| `0x71` | `1f 71 01 cb c2` | `[0]`=0xCB=**203dpi** |
+| `0x72` | `1f 72 0b 01 80 02 3a …` | `[1..2]`=0x0180=**384 点** |
+| `0x73` | `… 00 00 0d 5b 00 00 0d 59 00 00 03 9c 00 00 00 15` | 4×int32 = 打印计数 |
+| `0x75` | `1f 75 12 b5 c2 d9 a1 … 7c 44 45 54 4f 4e 47 00 ff` | GBK：「德佟电子\|DETONG」 |
+| `0x78` | `02 53` | 设备类型 |
+| `0x79` | `1f 79 0c "P1-61085930" 00 2c` | ASCII 名称 |
+| `0x7A` | `1f 7a 05 27 01 0e 01 0e 3b` | 固件版本 |
+| `0x7B` | `2e` | 缓冲大小（46） |
+| `0x7C` | `"3.1.20260924"` | **软件版本字符串** |
+| `0x7D` | `10 28d41e9a99db 14 28d41e9a99db` | 双 MAC（蓝牙+？） |
+| `0x84` | 25 字节 | 硬件标志位 |
+| `0x42` | `02` | 纸张类型 = 2 不干胶 |
+| `0x43` | `05 0f 01 04` | 浓度：当前 5 / 最大 15 / 最小 1 / 默认 4 |
+| `0x44` | `02 01 00 cb 01 1c` | 速度：当前 2 |
+| `0x45` | `c1 2c` | EBV 300 → **3.00mm 间隙** |
+| `0x48` | `0f` | 自动关机 15 分钟 |
+| `0x52` | `02 03 04 00` | 支持的纸张类型 {不干胶, 黑标, 透明} |
+| `0x57` | `0c` | 马达模式能力 |
+| `0x59` | `61 01` | 语言能力 |
+| `0x88 [01]` | `01 01 88 01 87 …` | 电量 3.91V / 65% |
+| `0x88 [02]` | `02 00 d9 …` | 打印头 21.7°C |
+
+**写设置**（都要 `等级-1`，与官方 SDK 一致）：
+
+| 动作 | 帧 |
+|---|---|
+| 浓度=8 | `1F 43 01 07` |
+| 速度=3 | `1F 44 01 02` |
+| 纸张=不干胶 | `1F 42 01 02` |
+| 间隙=3mm | `1F 45 02 C1 2C` |
+| 自动关机=30min | `1F 48 01 1E` |
+
+> 实测：浓度、纸张类型、间隙长度写入后立即生效并读回；**速度写入未观察到变化**
+> （可能只在打印时应用或被马达模式限制），标记 ⚠️。
+
 ### 0.4 状态码 ✅（`0x70` 回包首字节）
 
 ```
@@ -350,3 +390,81 @@ python weida_protocol.py esc feed 300                  # → 1b 4a ff 1b 4a 2d
 | `esc_feed(dots)` | 走纸 |
 | `parse_frames(buf)` | 解打印机回包 |
 | `job_from_1bpp(raw, w, h)` | 1bpp → 打印字节流 |
+
+
+---
+
+## 10. Python API 参考（`p1_client.py`）
+
+```python
+import asyncio
+from p1_client import P1Client, render_text, render_qr
+
+async def main():
+    async with P1Client("28:D4:1E:9A:99:DB") as p1:
+        print(await p1.status())        # {'ok': True, 'code': 0, 'text': '可打印'}
+        print(await p1.battery())       # {'ok': True, 'battery_v': 3.91, 'battery_level': 65}
+        print(await p1.head_temp())     # {'ok': True, 'head_temp_c': 21.7}
+        print(await p1.read_info())     # 型号/固件/序列号/DPI/宽度/厂商
+        print(await p1.settings())      # 浓度/速度/纸张/间隙/自动关机/计数/能力
+
+        await p1.set_darkness(8)        # 1..15
+        await p1.set_gap_type("gap")    # 不干胶
+        await p1.set_gap_len(3.0)       # mm
+
+        raw, w, h = render_text("你好\n第二行", width_mm=40, height_mm=30)
+        await p1.print_batch(raw, w, h, count=3, width_mm=40)
+```
+
+### 方法一览
+
+| 方法 | 说明 |
+|---|---|
+| `status()` | 状态码 → `{ok, code, text}` |
+| `battery()` | 电压/电量格数/充电中 |
+| `head_temp()` | 打印头温度 |
+| `read_info()` | GATT 180A + 协议查询（名称/DPI/宽度/厂商/固件/软件版本） |
+| `settings()` | 浓度/速度/纸张类型/间隙/自动关机/打印计数/能力 |
+| `set_darkness(1..15)` | 浓度（发 值-1） |
+| `set_speed(1..5)` | 速度 ⚠️ 实测未变 |
+| `set_gap_type("gap")` | 纸张类型：none/gap/black/transparent |
+| `set_gap_len(mm)` | 间隙长度 |
+| `set_auto_poweroff(min)` | 自动关机 |
+| `ensure_ready(wait=12)` | 轮询等到可打印；缺纸/开盖直接返回不可打印 |
+| `calibrate()` | `0C` 走到下一张起点（一批一次） |
+| `print_label_1bpp(raw,w,h)` | 打一张（结尾自动 `0C`） |
+| `print_batch(raw,w,h,count)` | 先校准再连打 N 张 |
+| `print_text(text, ...)` | 文本自动换行 |
+| `print_qr(data, caption=...)` | 二维码 |
+| `print_png(path, ...)` | 图片（自动缩放到标签宽） |
+| `send_cmd(cmd, payload)` | 发原始命令 |
+| `query(cmd, payload)` | 发命令并等回包 |
+
+### 渲染函数
+
+| 函数 | 返回 |
+|---|---|
+| `render_text(text, width_mm=40, height_mm=30, font_mm=3.5, align="left")` | `(1bpp bytes, w, h)` |
+| `render_qr(data, box_mm=24, caption="")` | `(1bpp bytes, w, h)` |
+
+两者都输出 **320×240 点**（40×30mm @203dpi），可直接交给 `print_label_1bpp`。
+
+### 命令行
+
+```bash
+python weida/p1_client.py info         # 设备信息
+python weida/p1_client.py status       # 状态 + 电量 + 温度
+python weida/p1_client.py settings     # 全部设置（JSON）
+python weida/p1_client.py demo         # 测试图
+python weida/p1_client.py print-text "你好"
+python weida/p1_client.py print-qr "https://example.com"
+python weida/p1_client.py print-label a.png --width 320 --label-h 240 --count 3
+python weida/p1_client.py cmd 0x70     # 发任意命令
+```
+
+### 测试
+
+```bash
+python tests/test_weida.py     # 44 项，用真机抓到的回包做基准
+python weida/weida_protocol.py test   # 14 项帧/标签流自检
+```

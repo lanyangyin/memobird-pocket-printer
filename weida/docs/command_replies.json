@@ -1,0 +1,104 @@
+{
+  "0x76": {
+    "label": "缓冲状态 BUFFER_STATE",
+    "resp": null
+  },
+  "0x73": {
+    "label": "打印计数 PRINT_COUNTER",
+    "resp_cmd": "0x73",
+    "len": 16,
+    "hex": "00 00 0d 5b 00 00 0d 59 00 00 03 9c 00 00 00 15"
+  },
+  "0x52": {
+    "label": "能力:间隙类型 CAP_GAPTYPE",
+    "resp_cmd": "0x52",
+    "len": 4,
+    "hex": "02 03 04 00"
+  },
+  "0x57": {
+    "label": "能力:马达模式 CAP_MOTORMODE",
+    "resp_cmd": "0x57",
+    "len": 1,
+    "hex": "0c"
+  },
+  "0x59": {
+    "label": "能力:语言 CAP_LANGUAGE",
+    "resp_cmd": "0x59",
+    "len": 2,
+    "hex": "61 01"
+  },
+  "0x48": {
+    "label": "自动关机 AUTOPOWEROFF",
+    "resp_cmd": "0x48",
+    "len": 1,
+    "hex": "0f"
+  },
+  "0x49": {
+    "label": "语言 LANGUAGE",
+    "resp": null
+  },
+  "0x43": {
+    "label": "浓度 DARKNESS",
+    "resp_cmd": "0x43",
+    "len": 4,
+    "hex": "05 0f 01 04"
+  },
+  "0x44": {
+    "label": "速度 SPEED",
+    "resp_cmd": "0x44",
+    "len": 6,
+    "hex": "02 01 00 cb 01 1c"
+  },
+  "0x45": {
+    "label": "间隙长度 GAP_LEN",
+    "resp_cmd": "0x45",
+    "len": 2,
+    "hex": "c1 2c"
+  },
+  "0x42": {
+    "label": "纸张类型 GAP_TYPE",
+    "resp_cmd": "0x42",
+    "len": 2,
+    "hex": "02 1d"
+  },
+  "0x78": {
+    "label": "设备类型 DEVICE_TYPE",
+    "resp_cmd": "0x78",
+    "len": 2,
+    "hex": "02 53"
+  },
+  "0x7B": {
+    "label": "缓冲大小2 BUFFER_SIZE2",
+    "resp_cmd": "0x7B",
+    "len": 1,
+    "hex": "2e"
+  },
+  "0x7C": {
+    "label": "软件版本 SOFTWARE_VERSION",
+    "resp_cmd": "0x7C",
+    "len": 13,
+    "hex": "33 2e 31 2e 32 30 32 36 30 39 32 34 00"
+  },
+  "0x7D": {
+    "label": "设备DMI DEVICE_DMINFO",
+    "resp_cmd": "0x7D",
+    "len": 14,
+    "hex": "10 28 d4 1e 9a 99 db 14 28 d4 1e 9a 99 db"
+  },
+  "0x84": {
+    "label": "硬件标志 HARDWARE_FLAGS",
+    "resp_cmd": "0x84",
+    "len": 25,
+    "hex": "73 24 42 11 00 00 00 50 00 00 00 00 00 00 00 00 20 e9 9d c9 01 00 00 00 00"
+  },
+  "0x90": {
+    "label": "设备发现 DEV_DISCOVERY",
+    "resp_cmd": "0x00",
+    "len": 2,
+    "hex": "90 6f"
+  },
+  "0x9E": {
+    "label": "握手 DEV_HANDSHAKE",
+    "resp": null
+  }
+}

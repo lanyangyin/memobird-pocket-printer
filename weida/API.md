@@ -29,11 +29,45 @@
 
 ### 0.1b 三种连接方式（电脑/手机都能用）✅
 
-| 方式 | 电脑上怎么连 | 实测 |
-|---|---|---|
-| **经典蓝牙 SPP** | 系统配对后自动出现 `COMx` 串口（蓝牙属性里勾"串行端口"） | ✅ **已通，能打印** |
-| **BLE** | Web Bluetooth（Chrome）/ bleak（Python） | ✅ 已通（需信用额度） |
-| **USB** | 官方 App 用 Android USB Host；JS SDK 走 WebHID | ⚠️ 未见设备，未验证 |
+| 方式 | 电脑上怎么连 | 打印 | 读状态 | 备注 |
+|---|---|---|---|---|
+| **USB** | 插线即可，走 Windows 自带 usbprint 接口 | ✅ | ✅ | **最稳，不用配对** |
+| **经典蓝牙 SPP** | 配对后出现 `COMx` | ✅ | ✅ | 无线，需配对 |
+| **BLE** | bleak / Web Bluetooth | ✅ | ✅ | 要信用额度 + 分片 |
+
+### USB 接口细节 ✅
+
+插上 USB 后设备是**复合设备**：
+
+```
+USB\VID_3533&PID_5A11  "P1 Label Printer"
+  ├─ MI_00  USB Printer class  ← 打印+命令（我们走这条）
+  └─ MI_01  HID (usage page 0xFF, report id 0x1E=30)  ← 官方 JS SDK 走这条
+```
+
+不需要装驱动、不需要 Zadig，直接用 Windows 自带的 usbprint 设备接口：
+
+```python
+from p1_usb import P1UsbClient
+
+async with P1UsbClient() as p1:          # 自动找 \?\usb#vid_3533&pid_5a11&mi_00#...
+    print(await p1.status())             # 可打印
+    print(await p1.battery())            # 4.09V / 82%
+    await p1.print_text("你好")
+```
+
+```bash
+python weida/p1_usb.py ports      # 列 usbprint 接口
+python weida/p1_usb.py status     # 状态/电量/温度
+python weida/p1_usb.py print-text "USB 打印"
+python weida/p1_usb.py print-label a.png --count 3
+```
+
+**实现要点**：接口必须用 `FILE_FLAG_OVERLAPPED` 打开并以重叠 I/O 读
+（同步 `ReadFile` 会永久阻塞）；USB 回包是**按顺序排队**的，
+所以连接时要先 `_drain()` 把上次残留的回包丢掉。
+
+> HID（MI_01）实测在本机写入成功但**收不到任何回包**，暂不采用。
 
 **串口（SPP）的优势**：不用信用额度、不用 20 字节分片，直接写整包就行。
 

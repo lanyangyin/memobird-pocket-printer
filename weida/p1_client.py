@@ -75,15 +75,19 @@ class P1Client:
         from bleak import BleakClient
 
         self._loop = asyncio.get_running_loop()
-        self.client = BleakClient(self.addr, timeout=25)
         for attempt in range(4):
             try:
+                self.client = BleakClient(self.addr, timeout=30)
                 await self.client.connect()
                 break
-            except Exception:
+            except Exception as exc:
                 if attempt == 3:
-                    raise
-                await asyncio.sleep(1.5)
+                    raise OSError(
+                        f"连不上 {self.addr}（{type(exc).__name__}）。"
+                        f"打印机可能需要重启：断电再开机，然后重试") from exc
+                if self.echo:
+                    print(f"    连接失败（{attempt + 1}/4），2 秒后重试…", flush=True)
+                await asyncio.sleep(2.0)
         # ---- 自动识别通道 ----
         uuids = set()
         self.chunk = DEFAULT_CHUNK

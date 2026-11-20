@@ -34,6 +34,21 @@ window.__RENDER__ = async function(spec) {
     }
     const res = await api.commitJob();
     const pd = res && res.resultInfo && res.resultInfo.printData;
+    // 精确结构探测
+    window.__DESC__ = (function () {
+      const t = (x) => Object.prototype.toString.call(x);
+      const r = { pdType: t(pd), pdLen: pd && pd.length };
+      if (Array.isArray(pd) && pd.length) {
+        r.e0 = t(pd[0]);
+        r.e0Len = pd[0].length;
+        if (pd[0] && pd[0].length) {
+          r.e00 = t(pd[0][0]);
+          r.e00Len = pd[0][0] && pd[0][0].length;
+          r.e00Ctor = pd[0][0] && pd[0][0].constructor && pd[0][0].constructor.name;
+        }
+      }
+      return r;
+    })();
     const out = [];
     (function walk(x, d) {
       if (!x || d > 8) return;
@@ -47,7 +62,8 @@ window.__RENDER__ = async function(spec) {
     })(pd, 0);
     let hex = "";
     for (const b of out) hex += b.toString(16).padStart(2, "0");
-    window.__OUT__ = { status: res && res.statusCode, len: out.length, hex: hex };
+    window.__OUT__ = { status: res && res.statusCode, len: out.length, hex: hex,
+                       desc: window.__DESC__ };
   } catch (e) { window.__ERR__ = String((e && e.stack) || e); }
 };
 </script></body></html>"""

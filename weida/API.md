@@ -317,6 +317,42 @@ python weida/p2_spooler.py print-image a.png
 
 > 这条路线**不需要** BLE 协议、也不需要 Chrome；只要装了驱动就行。
 
+### 0P.3b 能不能只用蓝牙？—— 能，且已实测出纸
+
+**能。** 那张 50×30 全黑标签就是**纯蓝牙**打出来的（没有插 USB、没有用驱动）：
+BLE（ISSC 透传）→ 26 字节官方流 → 打印机出纸。
+
+```
+BLE 服务 49535343-fe7d-4ae5-8fa9-9fafd205e455
+  写  49535343-8841-43f4-a8d4-ecbe34729bb3
+  通知 49535343-1e4d-4bd9-ba61-23c647249616
+MTU 190 → 分片 187 字节
+```
+
+```bash
+python weida/p2_client.py print-text "维达标签 P2\n50x30 纯蓝牙"
+python weida/p2_client.py print-qr "https://example.com"
+python weida/p2_client.py print-image a.png
+python weida/p2_client.py status
+python weida/p2_client.py darkness 14
+```
+
+**当前限制**：
+
+| 项 | 情况 |
+|---|---|
+| 内容编码 | 用**官方 JS SDK + 无头 Chrome** 生成字节流（`p2_sdk.py`），约 3~5 秒/张 |
+| 为什么自己编码不行 | P2 只认 RLE 族命令（`0x2C/0x2D/0x29/0x2E`），明文行 `0x2B` 打不出来；RLE 编码规则**还没逆出来** |
+| 浓度 | 默认 5 太淡，标签要 14（代码里会自动调） |
+| USB 插着时 | BLE 可能不可用，纯蓝牙时要拔掉 USB |
+| 卡纸/异常后 | BLE 会连不上（能广播但连不进去），**断电重启**即可 |
+
+**想彻底摆脱 Chrome** 的两条路：
+
+1. 把 RLE 编码逆完（用 SDK 生成样本反推，`weida/docs/sample_*.hex` 里已存了 7 组：
+   全白/全黑/单行/左半黑/单点/竖线/文字）
+2. 或者：用驱动打一次，把发给打印机的字节抓下来对照
+
 ### 0P.4 备用路线：BLE + 官方 SDK 编码（无需装驱动）
 
 P2 的 BLE 是 ISSC 透传，协议仍是 0x1F 帧，但**打印流格式与 P1 不同**：

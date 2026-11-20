@@ -68,3 +68,7 @@ weida/*.apk
 weida/jadx/
 weida/*.zip
 weida/*.tar*
+
+weida/knowledge.json
+weida/state.json
+weida/autoprobe_report.md

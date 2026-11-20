@@ -38,6 +38,15 @@ INFO_UUIDS = {
     "软件": "00002a28-0000-1000-8000-00805f9b34fb",
 }
 
+# 标签间隙类型（LabelControl.GapType）
+GAP_TYPES = {
+    "none": 0,        # 连续纸
+    "hole": 1,        # 定位孔
+    "gap": 2,         # 间隙纸（不干胶标签）
+    "black": 3,       # 黑标
+    "transparent": 4,  # 透明纸
+}
+
 DEFAULT_CHUNK = 20
 DEFAULT_SETTLE = 0.004
 
@@ -55,6 +64,9 @@ class P1Client:
         self.credits = 0
         self.sent_bytes = 0
         self.messages: list[tuple[str, str]] = []
+        self.rxq: list[tuple[int, bytes]] = []
+        self.push_status: list[dict] = []
+        self._waiter: asyncio.Future | None = None
         self._cond = asyncio.Condition()
         self._loop = None
 
@@ -78,6 +90,12 @@ class P1Client:
         except Exception:                            # noqa: BLE001
             pass
         await asyncio.sleep(1.2)                     # 等固件准备好 + 初始额度
+        # 初始化：开启设置（实测必须，否则 0x88 查询无回包）
+        try:
+            await self.send_cmd(W.CMD_ENABLE_SETTING, b"\x7f")
+            await asyncio.sleep(0.3)
+        except Exception:                            # noqa: BLE001
+            pass
         return self
 
     async def __aexit__(self, *exc):
@@ -96,11 +114,24 @@ class P1Client:
         raw = bytes(data)
         self._log(raw.hex(" "), "FF03")
         if len(raw) >= 2 and raw[0] == 0x01:
-            # 在事件循环里改额度
+            # 信用额度：01 nn
             self._loop.create_task(self._grant(raw[1]))
+        for cmd, payload in W.parse_frames(raw):
+            self.rxq.append((cmd, payload))
+            if self._waiter is not None and not self._waiter.done():
+                self._waiter.set_result((cmd, payload))
+        # 0x40 主动上报（电量/状态）
+        for cmd, payload in W.parse_frames(raw):
+            if cmd == W.CMD_PUSH_STATUS:
+                self.push_status.append(W.decode_push(payload))
 
     def _on_ff01(self, _sender, data: bytearray) -> None:
-        self._log(bytes(data).hex(" "), "FF01")
+        raw = bytes(data)
+        self._log(raw.hex(" "), "FF01")
+        for cmd, payload in W.parse_frames(raw):
+            self.rxq.append((cmd, payload))
+            if self._waiter is not None and not self._waiter.done():
+                self._waiter.set_result((cmd, payload))
 
     async def _grant(self, n: int) -> None:
         async with self._cond:
@@ -133,12 +164,58 @@ class P1Client:
                 await asyncio.sleep(self.settle)
         return True
 
+    async def set_gap_type(self, gap: "str | int") -> bool:
+        """设置标签间隙类型（0x42）。不干胶标签用 gap=2。"""
+        val = GAP_TYPES.get(gap, gap) if isinstance(gap, str) else gap
+        return await self.send_cmd(0x42, bytes([int(val) & 0xFF]))
+
     async def send_cmd(self, cmd: int, payload: bytes = b"") -> bool:
-        """发一条控制命令（AA/BB 帧），走同一条信用通道。"""
+        """发一条控制命令（0x1F 帧），走同一条信用通道。"""
         return await self.send(W.frame(cmd, payload))
+
+    async def query(self, cmd: int, payload: bytes = b"",
+                    *, timeout: float = 3.0) -> tuple[int, bytes] | None:
+        """发命令并等它的回包。"""
+        self._waiter = asyncio.get_running_loop().create_future()
+        try:
+            await self.send_cmd(cmd, payload)
+            return await asyncio.wait_for(self._waiter, timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._waiter = None
+
+    async def status(self) -> dict:
+        """查打印状态（缺纸/开盖/过热…）。"""
+        r = await self.query(W.CMD_IS_PRINTABLE)
+        if not r:
+            return {"ok": False, "error": "无回包"}
+        return {"ok": True, **W.decode_status(r[1])}
+
+    async def battery(self) -> dict:
+        """电量（0x88 / ADCEVT_POWER），失败时退回到 0x40 推送。"""
+        r = await self.query(W.CMD_REQ_ADCVALUE, bytes([W.ADCEVT_POWER]))
+        if r:
+            info = W.decode_adc(r[1])
+            if info.get("battery_v") is not None:
+                return {"ok": True, **info}
+        if self.push_status:
+            last = self.push_status[-1]
+            if last.get("battery_v") is not None:
+                return {"ok": True, **last}
+        return {"ok": False, "error": "无电量数据"}
+
+    async def head_temp(self) -> dict:
+        """打印头温度（0x88 / ADCEVT_TPHTM）。"""
+        r = await self.query(W.CMD_REQ_ADCVALUE, bytes([W.ADCEVT_TPHTM]))
+        if not r:
+            return {"ok": False, "error": "无回包"}
+        info = W.decode_adc(r[1])
+        return {"ok": info.get("head_temp_c") is not None, **info}
 
     # ---------------- 便捷操作 ----------------
     async def read_info(self) -> dict:
+        """设备信息：GATT 180A + 协议查询。"""
         out = {}
         for label, uuid in INFO_UUIDS.items():
             try:
@@ -146,6 +223,24 @@ class P1Client:
                 out[label] = val.decode("utf-8", "replace").strip("\x00 ")
             except Exception as exc:                 # noqa: BLE001
                 out[label] = f"<{type(exc).__name__}>"
+        try:
+            r = await self.query(W.CMD_DEVICE_NAME)
+            if r:
+                out["名称(协议)"] = r[1].decode("ascii", "replace").strip("\x00")
+            r = await self.query(W.CMD_PRINTER_DPI)
+            if r and r[1]:
+                out["DPI(协议)"] = r[1][0]
+            r = await self.query(W.CMD_PRINTER_WIDTH)
+            if r and len(r[1]) >= 2:
+                out["打印宽度(点)"] = (r[1][0] << 8) | r[1][1]
+            r = await self.query(W.CMD_MANUFACTURER)
+            if r:
+                try:
+                    out["厂商(协议)"] = r[1].replace(b"\x00", b"").decode("gbk", "replace")
+                except Exception:                    # noqa: BLE001
+                    out["厂商(协议)"] = r[1].hex(" ")
+        except Exception as exc:                     # noqa: BLE001
+            out["协议查询"] = f"<{type(exc).__name__}>"
         return out
 
     async def print_1bpp(self, raw: bytes, width_dots: int, height_dots: int,
@@ -153,6 +248,43 @@ class P1Client:
         stream = W.job_from_1bpp(raw, width_dots, height_dots, line_dots=feed_dots)
         if self.echo:
             print(f"    发送 {len(stream)} 字节（{width_dots}x{height_dots} 光栅）", flush=True)
+        return await self.send(stream)
+
+    async def locate_next_label(self, wait: float = 1.6) -> None:
+        """0C：走到下一张标签的起始边界（机械动作，要等它走完）。"""
+        await self.send(W.LOCATE_NEXT)
+        await asyncio.sleep(wait)
+
+    async def ensure_ready(self) -> dict:
+        """打印前检查：缺纸/无标签/开盖 就不要打。"""
+        st = await self.status()
+        if not st.get("ok"):
+            return {"ready": None, **st}
+        code = st.get("code")
+        ready = code in (0, 10)          # 0 可打印 / 10 无任务
+        return {"ready": ready, **st}
+
+    async def print_label_1bpp(self, raw: bytes, width_dots: int, height_dots: int,
+                               *, width_mm: int | None = None,
+                               align_first: bool = True) -> bool:
+        """打一张标签。
+
+        实测：直接打印会从纸的当前位置开始（第一张必然被切断），
+        而 0C 能把纸定位到标签边界 —— 所以**先 0C 对齐，再开始打印**。
+        """
+        chk = await self.ensure_ready()
+        if chk.get("ready") is False:
+            if self.echo:
+                print(f"    ⚠ 打印前检查未通过：{chk.get('text')}（{chk.get('code')}），已跳过", flush=True)
+            return False
+
+        if align_first:
+            if self.echo:
+                print("    先 0C 定位到标签起始边界…", flush=True)
+            await self.locate_next_label()
+        stream = W.label_stream(raw, width_dots, height_dots, width_mm=width_mm)
+        if self.echo:
+            print(f"    标签流 {len(stream)} 字节（{width_dots}x{height_dots} 点）", flush=True)
         return await self.send(stream)
 
     async def print_png(self, path: str, *, width_dots: int = 384,
@@ -186,12 +318,16 @@ def _demo_image(width: int = 384, height: int = 40) -> tuple[bytes, int, int]:
 async def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Dothantech P1 BLE 客户端")
     ap.add_argument("what", nargs="?", default="demo",
-                    choices=["info", "demo", "print-png", "cmd"])
+                    choices=["info", "status", "demo", "print-png", "print-label", "cmd"])
     ap.add_argument("arg", nargs="?", help="print-png 的路径 / cmd 的命令码")
     ap.add_argument("--addr", default="28:D4:1E:9A:99:DB")
     ap.add_argument("--feed", type=int, default=24, help="打完走纸多少点")
     ap.add_argument("--width", type=int, default=384, help="打印宽度（点）")
     ap.add_argument("--threshold", type=int, default=128)
+    ap.add_argument("--label-h", type=int, default=240,
+                    help="标签高度点数（40x30mm 标签 = 240）")
+    ap.add_argument("--gap", default="",
+                    help="标签间隙类型：none/hole/gap/black/transparent；不设则不动")
     args = ap.parse_args(argv)
 
     if not args.addr:
@@ -199,10 +335,28 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
 
     async with P1Client(args.addr) as p1:
+        if args.gap:
+            ok = await p1.set_gap_type(args.gap)
+            print(f"  设置间隙类型 {args.gap} → {'成功' if ok else '失败'}")
+            await asyncio.sleep(0.5)
         if args.what == "info":
             info = await p1.read_info()
             for k, v in info.items():
                 print(f"  {k}: {v}")
+            return 0
+
+        if args.what == "status":
+            st = await p1.status()
+            print(f"  状态: {st.get('text')}  (code={st.get('code')})")
+            bat = await p1.battery()
+            if bat.get("ok"):
+                print(f"  电量: {bat['battery_v']}V  格数={bat.get('battery_level')}"
+                      f"{'  充电中' if bat.get('charging') else ''}")
+            else:
+                print(f"  电量: 读不到（{bat.get('error')}）")
+            t = await p1.head_temp()
+            if t.get("ok"):
+                print(f"  打印头: {t['head_temp_c']}°C")
             return 0
 
         if args.what == "cmd":
@@ -211,6 +365,35 @@ async def main(argv: list[str] | None = None) -> int:
             print(f"  命令 0x{code:02X} 发送{'成功' if ok else '失败'}")
             await asyncio.sleep(1.0)
             return 0
+
+        if args.what == "print-label":
+            if not args.arg:
+                print("print-label 需要图片路径")
+                return 2
+            from PIL import Image
+
+            img = Image.open(args.arg).convert("L")
+            # 按 40mm 宽等比缩放，白底居中
+            wdots = args.width
+            ratio = min(wdots / img.width, args.label_h / img.height)
+            img = img.resize((max(1, int(img.width * ratio)),
+                              max(1, int(img.height * ratio))))
+            row_bytes = (wdots + 7) // 8
+            canvas = bytearray(row_bytes * args.label_h)
+            ox = (wdots - img.width) // 2
+            oy = (args.label_h - img.height) // 2
+            px = img.load()
+            for y in range(img.height):
+                for x in range(img.width):
+                    if px[x, y] < args.threshold:
+                        gx, gy = ox + x, oy + y
+                        if 0 <= gx < wdots and 0 <= gy < args.label_h:
+                            canvas[gy * row_bytes + (gx >> 3)] |= 0x80 >> (gx & 7)
+            ok = await p1.print_label_1bpp(bytes(canvas), wdots, args.label_h,
+                                           width_mm=wdots // 8)
+            print(f"  结果: {'已发送 ' + str(p1.sent_bytes) + ' 字节' if ok else '中断'}")
+            await asyncio.sleep(1.5)
+            return 0 if ok else 1
 
         if args.what == "print-png":
             if not args.arg:

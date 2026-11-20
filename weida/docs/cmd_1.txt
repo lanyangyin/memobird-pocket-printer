@@ -1,0 +1,143 @@
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Label Printer 
+ 
+Bitmap Printing Command  
+Description Document  
+V1.1 
+ 
+ 
+ 
+ 
+DothanTech  
+27th Feb. 2019 
+ 
+ 
+ 
+Dothantech
+DothanTech  Bitmap Printing Command Description 
+Content 
+Content ..................................................................................................................................... 2 
+Document Modification Records .......................................................................................... 3 
+1. 1B 40 Intialisting print parameters ................................................................................... 4 
+2. 1F 27 01 n 88 Setting the print width .............................................................................. 4 
+3. 1B 4A n Go N empty lines ................................................................................................. 4 
+4. 1F 2A nL nH …  Print a line of N dots ............................................................................. 4 
+5. 1F 2B m n … Print a line with leading blanks ................................................................ 4 
+6.  1F 2E n Duplicate rows .................................................................................................... 5 
+7.  0C Locate to next paper boundary ................................................................................. 5
+ 2 / 5 
+Dothantech
+DothanTech     
+ 
+Bitmap Printing Command Description 
+Document Modification Records 
+ 
+ 
+SN Version Descriptions Modifier Date 
+1 V0.1  Document Creation Yang Lingmei 2017-02-06 
+2 V1.0  First version released Liu Weihong 2017-02-06 
+3 V1.1  Added 1F 2B image data printing command Liu Weihong 2019-02-27 
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+  
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 3 / 5 
+ 
+Dothantech
+DothanTech  Bitmap Printing Command Description 
+T
+he two digits numbers used in this document are all hexadecimal data, such as 00 for decimal 
+0, FF for decimal 255, and so on. 
+1. 1B 40 Intialisting print parameters
+Initialize printing parameters to default values and start printing a label as the first command.
+2. 1F 27 01 n 88 Setting the print width
+Set the width of the printed label to (dots + 7) / 8. Since the printer prints at a resolution of 8 
+dots per millimeter, the value is actually the width of the printed label in millimeters. Both the 
+DT60 and DP23 series printers have an effective maximum print width of 48 mm.
+3. 1B 4A n Go N empty lines
+Go N（0～255）empty lines
+4. 1F 2A nL nH …  Print a line of N dots 
+Print a line of N dots，…for the data to be printed, Its byte number is (n+7)/ 8. nL nH is the 
+number of points represented in two bytes, with the low byte front and the high byte behind. 
+T
+he print data is arranged in order from left to right, with one bit representing a print point, bit 1 
+indicates a point that needs to be printed, 0 indicates a point not to be printed, and the point to
+the left being at the higher bit of a byte.
+I
+f the specified number of points exceeds the label width, the excess print content will be 
+ignored; if the specified number of points is less than the label width, the missing data is 0 by
+default, which means the content does not need to be printed.
+5. 1F 2B m n … Print a line with leading blanks
+Print a line with leading blanks, m is the number of bytes with leading zeros (0 ~ 191), n is the 
+number of bytes of print data (0 ~ 191), and ... is the data to be printed, whose number of bytes
+is specified by n.
+T
+he print data is arranged in order from left to right, with one bit representing a print point, bit 1 
+indicates a point that needs to be printed, 0 indicates a point not to be printed, and the point to
+the left being at the higher bit of a byte.
+I
+f the specified number of leading zeros (m x 8) plus the number of print data points (n x 8) 
+exceeds the label width, the exceeding print content will be ignored; if the specified number of 
+points is less than the label width, the missing data is 0 by default, which means the content 
+does not need to be printed. 
+T
+his print command is a data compression type of the 1F 2A print command. For the 
+case that there are more leading blanks (leading zeros, i.e., no need to print the contents) in 
+one line of print data, which can effectively compress the print data volume.
+ 4 / 5 
+Dothantech
+DothanTech  Bitmap Printing Command Description 
+6. 1F 2E n Duplicate rows
+Print a duplicate line with the same content as the previous line. n is the number of
+duplicate lines - 1, such as the number of duplicate lines is 2, then the value of N is 1;
+the number of duplicate lines is 192, then the value of N is 191, and so on.
+N
+ote: The value of N should be less than 192, if the number of duplicate lines is 
+greater than 192, then you need to split into multiple print duplicate line commands. 
+For example, if the actual number of duplicate lines is 256, then it needs to be split 
+into the following two print duplicate line commands: 1F 2E BF 1F 2E 3F 
+7. 0C Locate to next paper boundary
+Locate to the boundary of the next label to end the printing of a label.
+ 5 / 5 

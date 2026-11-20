@@ -72,3 +72,6 @@ weida/*.tar*
 weida/knowledge.json
 weida/state.json
 weida/autoprobe_report.md
+
+weida/docs/*.tgz
+weida/docs/lpapi/

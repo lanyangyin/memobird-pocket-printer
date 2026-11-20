@@ -62,3 +62,9 @@ click_*.png
 battery_shot.png
 
 status_bar_shot.png
+
+# ---- WeiDa-Label 逆向（APK/反编译产物不入库）----
+weida/*.apk
+weida/jadx/
+weida/*.zip
+weida/*.tar*

@@ -27,6 +27,40 @@
 
 连上后固件先给 `01 07`（7 个额度）；额度用完必须等，否则丢数据。
 
+### 0.1b 三种连接方式（电脑/手机都能用）✅
+
+| 方式 | 电脑上怎么连 | 实测 |
+|---|---|---|
+| **经典蓝牙 SPP** | 系统配对后自动出现 `COMx` 串口（蓝牙属性里勾"串行端口"） | ✅ **已通，能打印** |
+| **BLE** | Web Bluetooth（Chrome）/ bleak（Python） | ✅ 已通（需信用额度） |
+| **USB** | 官方 App 用 Android USB Host；JS SDK 走 WebHID | ⚠️ 未见设备，未验证 |
+
+**串口（SPP）的优势**：不用信用额度、不用 20 字节分片，直接写整包就行。
+
+Windows 上找端口：
+
+```powershell
+python weida/p1_serial.py ports
+#   COM64   蓝牙链接上的标准串行 (COM64)  MAC=28:D4:1E:9A:99:DB   ← P1
+#   COM61   蓝牙链接上的标准串行 (COM61)  MAC=00:15:83:E4:7A:F2   ← 另一台
+```
+
+串口客户端（API 与 BLE 版完全相同）：
+
+```python
+from p1_serial import P1SerialClient
+
+async with P1SerialClient("COM64") as p1:
+    print(await p1.status())        # 可打印
+    await p1.print_text("你好")
+```
+
+```bash
+python weida/p1_serial.py status --port COM64
+python weida/p1_serial.py print-text "串口打印测试"
+python weida/p1_serial.py print-label a.png --count 3
+```
+
 ### 0.2 帧格式 ✅
 
 ```
@@ -202,13 +236,22 @@ await p1.print_batch(bmp, 320, 240, count=3, width_mm=40)
 * 有**信用（credit）流控**：未收到回包前连续写的片数受限
   —— 发太快会丢数据（我们在别的机型上踩过，见 §6）
 
-### 1.2 经典蓝牙 SPP
+### 1.2 经典蓝牙 SPP ✅（电脑首选）
 
 ```
 UUID = 00001101-0000-1000-8000-00805F9B34FB
 ```
 
-用 `createRfcommSocketToServiceRecord` 连接后，直接收发 §2 的字节流（无分片问题）。
+Windows 配对后会出现一个 `COMx`，直接当串口用（115200 即可，SPP 忽略波特率）：
+
+```python
+import serial
+ser = serial.Serial("COM64", 115200, timeout=2)
+ser.write(bytes.fromhex("1f 79 00 86"))     # 查设备名
+```
+
+**实测**：P1 通过 COM64 读状态/电量/温度、打印 40×30 标签全部正常，
+且**不需要信用额度和分片**（整包写入即可）。
 
 ### 1.3 USB Host
 

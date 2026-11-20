@@ -138,6 +138,54 @@ def job_from_1bpp(raw: bytes, width_dots: int, height_dots: int,
 
 
 # --------------------------------------------------------------------------- #
+# 流式帧读取器（串口/BLE 分片到达时用）
+# --------------------------------------------------------------------------- #
+class FrameReader:
+    """把碎片数据喂进来，吐出完整的 (cmd, payload)。"""
+
+    def __init__(self) -> None:
+        self.buf = bytearray()
+        self.dropped = 0
+
+    def feed(self, data: bytes) -> list[tuple[int, bytes]]:
+        self.buf += data
+        out: list[tuple[int, bytes]] = []
+        while True:
+            idx = self.buf.find(bytes([START_PRINTER_TO_HOST]))
+            if idx < 0:
+                if self.buf:
+                    self.dropped += len(self.buf)
+                    self.buf.clear()
+                break
+            if idx:
+                self.dropped += idx
+                del self.buf[:idx]
+            if len(self.buf) < 3:
+                break
+            b2 = self.buf[2]
+            if b2 < 192:
+                ln, dstart, crc_at = b2, 3, 3 + b2
+            else:
+                if len(self.buf) < 4:
+                    break
+                ln = ((b2 & 0x3F) << 8) | self.buf[3]
+                dstart, crc_at = 4, 4 + ln
+            if len(self.buf) < crc_at + 1:
+                break                      # 还没收全
+            cmd = self.buf[1]
+            payload = bytes(self.buf[dstart:crc_at])
+            crc = self.buf[crc_at]
+            body = bytes(self.buf[1:crc_at])
+            if crc == NO_CRC_MARK or ((sum(body) + crc) & 0xFF) == 0xFF:
+                out.append((cmd, payload))
+                del self.buf[:crc_at + 1]
+            else:
+                self.dropped += 1
+                del self.buf[:1]
+        return out
+
+
+# --------------------------------------------------------------------------- #
 # EBV（变量长度整数）：<192 一字节，否则 0xC0|hi, lo
 # --------------------------------------------------------------------------- #
 def ebv(n: int) -> bytes:
@@ -469,6 +517,17 @@ def selftest() -> int:
     chk("计数解析", decode_counters(bytes.fromhex(
         "00000d5b 00000d59 0000039c 00000015".replace(" ", "")))["total"], 3419)
     chk("版本解析", decode_version(b"3.1.20260924\x00"), "3.1.20260924")
+
+    # 流式读取：分片到达也要能拼起来
+    rd = FrameReader()
+    real = bytes.fromhex("1f 79 0c 50 31 2d 36 31 30 38 35 39 33 30 00 2c")
+    got = rd.feed(real[:5]) + rd.feed(real[5:])
+    chk("FrameReader 分片拼接", len(got), 1)
+    chk("FrameReader 内容", decode_text(got[0][1]), "P1-61085930")
+    rd2 = FrameReader()
+    got2 = rd2.feed(b"\x00\x00" + real + real)
+    chk("FrameReader 处理两帧", len(got2), 2)
+    chk("FrameReader 丢弃垃圾", rd2.dropped >= 2, True)
 
     raster = gs_raster(bytes((384 + 7) // 8 * 2), 384, 2)
     chk("GS v 0 头", raster[:8].hex(" "), "1d 76 30 00 30 00 02 00")

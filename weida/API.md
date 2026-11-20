@@ -278,7 +278,50 @@ await p1.print_batch(bmp, 320, 240, count=3, width_mm=40)
 * 结尾 `1B 4A n` + `0C` 缺一不可
 * **打印前不要发 `0C`** —— 那会把当前这张整张吐掉（P1 也是同样坑）
 
-### 0P.3 RLE 行命令还没完全逆出 → 用官方 SDK 当编码器
+### 0P.3 推荐路线：Windows 打印驱动（最省事，已实测）
+
+德佟官方发布了 **P2 系列 Windows 驱动**（`DeTong_P2_Series_Windows_Driver_3.2.2026.1018.exe`）。
+装上后系统里会出现打印队列 **`P2 Label Printer`**（端口 `USB003`），
+驱动内部支持这些纸型（`id=200` 就是 50×30mm）：
+
+```
+id=181  A 50 x  300 mm      id=191  D 40 x 30 mm      id=200  E 50 x 30 mm
+id=184  C 30 x 20 mm        id=196  D 45 x 30 mm      id=201  E 50 x 40 mm
+```
+
+于是打印就变成"画图 → 交给驱动"：
+
+```python
+from p2_spooler import print_image, render_label, render_qr
+
+render_label(["维达标签", "50x30mm 不干胶"], "a.png", big="P2")
+print_image("a.png", paper_id=200)        # 200 = E 50x30mm
+```
+
+```bash
+python weida/p2_spooler.py papers                    # 列出驱动支持的纸型
+python weida/p2_spooler.py test --paper-id 200       # 打测试标签
+python weida/p2_spooler.py print-text "你好"
+python weida/p2_spooler.py print-qr "https://example.com"
+python weida/p2_spooler.py print-label "标题|第一行|第二行"
+python weida/p2_spooler.py print-image a.png
+```
+
+**实测**：50×30 标签对齐正确，文字清晰，二维码可扫。
+
+实现要点：
+
+* 纸型通过 `DEVMODE.PaperSize = 200` + `DM_PAPERSIZE` 指定位图（`win32gui.CreateDC("WINSPOOL", 名称, dm)`）
+* 画布按 203dpi 算：50mm = 400 点，30mm = 240 点
+* 纸型枚举用 `winspool.drv!DeviceCapabilitiesW`（不是 gdi32）
+
+> 这条路线**不需要** BLE 协议、也不需要 Chrome；只要装了驱动就行。
+
+### 0P.4 备用路线：BLE + 官方 SDK 编码（无需装驱动）
+
+P2 的 BLE 是 ISSC 透传，协议仍是 0x1F 帧，但**打印流格式与 P1 不同**：
+
+### 0P.4b RLE 行命令还没完全逆出 → 用官方 SDK 当编码器
 
 P2 只认 SDK 的 `0x2C/0x2D/0x29` RLE 编码，明文 `0x2B` 行在 P2 上打不出来（实测空白）。
 
@@ -305,7 +348,7 @@ python weida/p2_client.py print-text "你好"
 python weida/p2_sdk.py a.png 50 30     # 只编码，看字节
 ```
 
-### 0P.4 踩过的坑（都记录，避免重犯）
+### 0P.5 踩过的坑（都记录，避免重犯）
 
 | 现象 | 原因 |
 |---|---|
@@ -314,6 +357,8 @@ python weida/p2_sdk.py a.png 50 30     # 只编码，看字节
 | 打出来很淡 | 浓度默认 5，标签纸要 14 |
 | USB 打印无回包 | 那台设备是 DP27，走 usbprint 无回包；HID 通道也收不到输入 |
 | `FF03 not found` | P1 客户端写死了 P1 的 UUID → 已改成自动识别 ISSC |
+| 标签卡在机器里 | 反复发不合法流导致；断电重启即可 |
+| DTPWeb 打印助手 | 装了驱动后会常驻（监听 15216/15217），是给网页调用的本地服务；我们没用到它 |
 
 
 ---

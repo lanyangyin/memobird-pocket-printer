@@ -81,3 +81,5 @@ weida/docs/_rawdata*.html
 weida/docs/dzcanvas/
 weida/docs/dz-canvas.tgz
 weida/docs/lpapi-ble.tgz
+
+weida/win/

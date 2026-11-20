@@ -255,22 +255,53 @@ class P1Client:
         await self.send(W.LOCATE_NEXT)
         await asyncio.sleep(wait)
 
-    async def ensure_ready(self) -> dict:
-        """打印前检查：缺纸/无标签/开盖 就不要打。"""
-        st = await self.status()
-        if not st.get("ok"):
-            return {"ready": None, **st}
-        code = st.get("code")
-        ready = code in (0, 10)          # 0 可打印 / 10 无任务
-        return {"ready": ready, **st}
+    # 可打印 / 无任务 / 页面未收全（固件空闲时的几个容忍值）
+    READY_CODES = (0, 10, 11)
+    # 忙（等一会就好）
+    BUSY_CODES = (1, 2)
+
+    async def ensure_ready(self, *, wait: float = 12.0, interval: float = 0.4) -> dict:
+        """打印前检查；正在打印/转马达时轮询等到就绪。
+
+        缺纸/无标签/开盖 这类**不会自愈**的状态直接返回不可打印。
+        """
+        deadline = time.time() + wait
+        last = {"ok": False, "error": "未知"}
+        while True:
+            st = await self.status()
+            if st.get("ok"):
+                code = st.get("code")
+                if code in self.READY_CODES:
+                    return {"ready": True, **st}
+                if code not in self.BUSY_CODES:
+                    return {"ready": False, **st}
+                last = st
+            else:
+                last = st
+            if time.time() >= deadline:
+                return {"ready": False, **last}
+            await asyncio.sleep(interval)
+
+    async def calibrate(self, wait: float = 1.8) -> None:
+        """校准：把纸走到下一张标签的**起始**边界。
+
+        注意 0C 的语义是"向前走到下一张的边界"，所以这一步会把当前那张整张吐掉。
+        只在**一批打印开始前**做一次，或重新装纸后做一次。
+        """
+        if self.echo:
+            print("    校准：0C 走到下一张标签起点…", flush=True)
+        await self.send(W.LOCATE_NEXT)
+        await asyncio.sleep(wait)
 
     async def print_label_1bpp(self, raw: bytes, width_dots: int, height_dots: int,
                                *, width_mm: int | None = None,
-                               align_first: bool = True) -> bool:
+                               align_first: bool = False) -> bool:
         """打一张标签。
 
-        实测：直接打印会从纸的当前位置开始（第一张必然被切断），
-        而 0C 能把纸定位到标签边界 —— 所以**先 0C 对齐，再开始打印**。
+        实测要点：
+        * 每张**结束**都发 0C —— 走纸到下一张起点，下一张自然对齐
+        * **开头不要发 0C**：那等于把当前这张整张吐掉，再打印就落到下一张上
+        * 只有一批的第一张需要先 calibrate() 一次
         """
         chk = await self.ensure_ready()
         if chk.get("ready") is False:
@@ -279,13 +310,23 @@ class P1Client:
             return False
 
         if align_first:
-            if self.echo:
-                print("    先 0C 定位到标签起始边界…", flush=True)
-            await self.locate_next_label()
+            await self.calibrate()
         stream = W.label_stream(raw, width_dots, height_dots, width_mm=width_mm)
         if self.echo:
             print(f"    标签流 {len(stream)} 字节（{width_dots}x{height_dots} 点）", flush=True)
         return await self.send(stream)
+
+    async def print_batch(self, raw: bytes, width_dots: int, height_dots: int,
+                          count: int, *, width_mm: int | None = None) -> int:
+        """连续打 count 张：先校准一次，之后每张靠结尾的 0C 自动对齐。"""
+        await self.calibrate()
+        ok = 0
+        for i in range(count):
+            if self.echo:
+                print(f"    第 {i + 1}/{count} 张", flush=True)
+            if await self.print_label_1bpp(raw, width_dots, height_dots, width_mm=width_mm):
+                ok += 1
+        return ok
 
     async def print_png(self, path: str, *, width_dots: int = 384,
                         threshold: int = 128, feed_dots: int = 24) -> bool:
@@ -324,6 +365,7 @@ async def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--feed", type=int, default=24, help="打完走纸多少点")
     ap.add_argument("--width", type=int, default=384, help="打印宽度（点）")
     ap.add_argument("--threshold", type=int, default=128)
+    ap.add_argument("--count", type=int, default=1, help="连续打几张（先校准一次）")
     ap.add_argument("--label-h", type=int, default=240,
                     help="标签高度点数（40x30mm 标签 = 240）")
     ap.add_argument("--gap", default="",
@@ -389,8 +431,14 @@ async def main(argv: list[str] | None = None) -> int:
                         gx, gy = ox + x, oy + y
                         if 0 <= gx < wdots and 0 <= gy < args.label_h:
                             canvas[gy * row_bytes + (gx >> 3)] |= 0x80 >> (gx & 7)
+            if args.count > 1:
+                n = await p1.print_batch(bytes(canvas), wdots, args.label_h, args.count,
+                                         width_mm=wdots // 8)
+                print(f"  结果: {n}/{args.count} 张，共 {p1.sent_bytes} 字节")
+                await asyncio.sleep(2.0)
+                return 0 if n == args.count else 1
             ok = await p1.print_label_1bpp(bytes(canvas), wdots, args.label_h,
-                                           width_mm=wdots // 8)
+                                           width_mm=wdots // 8, align_first=True)
             print(f"  结果: {'已发送 ' + str(p1.sent_bytes) + ' 字节' if ok else '中断'}")
             await asyncio.sleep(1.5)
             return 0 if ok else 1

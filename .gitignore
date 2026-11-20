@@ -75,3 +75,9 @@ weida/autoprobe_report.md
 
 weida/docs/*.tgz
 weida/docs/lpapi/
+
+weida/docs/_enc_*.html
+weida/docs/_rawdata*.html
+weida/docs/dzcanvas/
+weida/docs/dz-canvas.tgz
+weida/docs/lpapi-ble.tgz

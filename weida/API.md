@@ -245,6 +245,79 @@ await p1.print_batch(bmp, 320, 240, count=3, width_mm=40)
 
 ---
 
+## 0P. 德佟 P2 / DP27（50×30mm 不干胶）—— 2026-11-20 实测
+
+### 0P.1 它与 P1 完全不同
+
+| 项 | P1 | P2（DP27） |
+|---|---|---|
+| BLE 服务 | `FF00` + FF03 信用额度 | **`49535343-fe7d-…`（ISSC/Microchip 透传）**，无流控 |
+| 写 / 通知 | FF02 / FF01 | `49535343-8841-…` / `49535343-1e4d-…` |
+| MTU 分片 | 20 字节 | **187 字节**（MTU 190） |
+| 打印流 | `1B 40` + `1F 27`(mm) + `1F 2A` 行 + `0C` | **`1F 20` PAGE_START + `1F 27`(字节) + RLE 行 + `1B 4A n` + `0C`** |
+| 设备名 | `P1-61085930` | `P2-Y309023608`（USB 上显示 `DeTong DothanTech DP27 Label Printer`） |
+| DPI / 头宽 | 203 / 384 点 | 203 / 384 点（50mm 标签两侧各浪费 1mm） |
+| 浓度默认 | — | **5（太淡，标签要 14）** |
+
+### 0P.2 P2 的打印流（官方 SDK 生成，已打出整张全黑）
+
+```
+1F 20 02 00 00 88        PAGE_START（页号 0）
+1F 27 01 32 88           PAGE_WIDTH = 0x32 = 50（**字节/行**，50mm 标签 → 400 点 → 50 字节）
+1F 2C 05 FF FF BD 00     RLEX  —— 压缩行（横向）
+1F 2E C0 ED              REPEAT —— 重复上一行 N 次
+...                      （还有 0x2D = RLED、0x29 = RLEC、0x2B = 明文行）
+1B 4A 01                 ESC J 1（走纸 1 点）
+0C                       定位到下一张标签边界
+```
+
+要点：
+
+* **所有帧的 CRC 位都用 `0x88`（免校验）**；RLE 数据帧甚至直接省略长度/CRC
+* `1F 27` 的单位是**字节**（不是毫米、也不是点数）
+* 结尾 `1B 4A n` + `0C` 缺一不可
+* **打印前不要发 `0C`** —— 那会把当前这张整张吐掉（P1 也是同样坑）
+
+### 0P.3 RLE 行命令还没完全逆出 → 用官方 SDK 当编码器
+
+P2 只认 SDK 的 `0x2C/0x2D/0x29` RLE 编码，明文 `0x2B` 行在 P2 上打不出来（实测空白）。
+
+所以 `p2_client.py` 的做法是：
+
+1. 用无头 Chrome 跑**德佟官方 JS SDK**（`lpapi-ble`），
+   以 `jobName = "#!#RawData#!#"` 提交任务 → SDK 直接返回打印二进制（`printData`）
+2. 拿到字节流后经 BLE（或串口/USB）发给打印机
+
+```python
+from p2_client import P2Client
+
+async with P2Client() as p2:
+    await p2.prepare(darkness=14)      # P2 默认太淡
+    await p2.print_text("维达标签 P2\n50x30mm")
+    await p2.print_qr("https://example.com", caption="P2")
+    await p2.print_image("a.png")
+```
+
+```bash
+python weida/p2_client.py status
+python weida/p2_client.py darkness 14
+python weida/p2_client.py print-text "你好"
+python weida/p2_sdk.py a.png 50 30     # 只编码，看字节
+```
+
+### 0P.4 踩过的坑（都记录，避免重犯）
+
+| 现象 | 原因 |
+|---|---|
+| 狂走纸 + 空白 | `PAGE_WIDTH` 单位错（当成了点数/毫米），页高不对 |
+| 整张吐掉再打 | 打印前发了 `0C` |
+| 打出来很淡 | 浓度默认 5，标签纸要 14 |
+| USB 打印无回包 | 那台设备是 DP27，走 usbprint 无回包；HID 通道也收不到输入 |
+| `FF03 not found` | P1 客户端写死了 P1 的 UUID → 已改成自动识别 ISSC |
+
+
+---
+
 ## 1. 传输层
 
 ### 1.1 BLE（推荐）
